@@ -24,7 +24,7 @@ export interface OrderCreatedEvent {
   createdAt: string;
 }
 
-export interface OrderConfirmedEvent {
+export interface OrderProcessedEvent {
   orderId: string;
   status: 'CONFIRMED' | 'FAILED';
   processedAt: string;

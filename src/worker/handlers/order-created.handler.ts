@@ -1,4 +1,4 @@
-import { OrderCreatedEvent, OrderConfirmedEvent } from '../../shared/types/order';
+import { OrderCreatedEvent, OrderProcessedEvent } from '../../shared/types/order';
 import { orderRepository } from '../../shared/repositories/order.repository';
 import { publishMessage } from '../../shared/messaging/publisher';
 import { ROUTING_KEYS } from '../../shared/messaging/constants';
@@ -21,7 +21,7 @@ export async function handleOrderCreated(
 
   await orderRepository.updateStatus(event.orderId, status);
 
-  const confirmedEvent: OrderConfirmedEvent = {
+  const processedEvent: OrderProcessedEvent = {
     orderId: event.orderId,
     status,
     processedAt: new Date().toISOString(),
@@ -32,7 +32,7 @@ export async function handleOrderCreated(
       ? ROUTING_KEYS.ORDER_CONFIRMED
       : ROUTING_KEYS.ORDER_FAILED;
 
-  await publishMessage(routingKey, confirmedEvent);
+  await publishMessage(routingKey, processedEvent);
 
   console.log(`Order ${event.orderId} processed with status: ${status}`);
 }

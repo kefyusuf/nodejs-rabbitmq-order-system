@@ -17,14 +17,26 @@ export async function orderRoutes(app: FastifyInstance): Promise<void> {
 
     const order = await orderRepository.create(parsed.data);
 
-    await publishMessage(ROUTING_KEYS.ORDER_CREATED, {
-      orderId: order.id,
-      customerName: order.customerName,
-      totalAmount: order.totalAmount,
-      createdAt: order.createdAt.toISOString(),
-    });
+    // The order is already persisted, so a broker outage must not fail the
+    // request. The order stays PENDING until an event gets through; a real
+    // fix is the outbox pattern (see README roadmap).
+    let eventPublished = true;
+    try {
+      await publishMessage(ROUTING_KEYS.ORDER_CREATED, {
+        orderId: order.id,
+        customerName: order.customerName,
+        totalAmount: order.totalAmount,
+        createdAt: order.createdAt.toISOString(),
+      });
+    } catch (error) {
+      eventPublished = false;
+      app.log.error(
+        error,
+        `Order ${order.id} persisted but order.created event could not be published`,
+      );
+    }
 
-    return reply.status(201).send(order);
+    return reply.status(201).send({ ...order, eventPublished });
   });
 
   app.get('/orders/:id', async (request, reply) => {
