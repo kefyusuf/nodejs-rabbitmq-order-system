@@ -172,6 +172,19 @@ async function assertTopology(ch: Channel): Promise<void> {
     DEAD_LETTER_EXCHANGE_NAME,
     ROUTING_KEYS.ORDER_PROCESSING_DEAD,
   );
+
+  // Fan-out of processed order events to the notification worker.
+  await ch.assertQueue(QUEUES.ORDER_NOTIFICATIONS, { durable: true });
+  await ch.bindQueue(
+    QUEUES.ORDER_NOTIFICATIONS,
+    EXCHANGE_NAME,
+    ROUTING_KEYS.ORDER_CONFIRMED,
+  );
+  await ch.bindQueue(
+    QUEUES.ORDER_NOTIFICATIONS,
+    EXCHANGE_NAME,
+    ROUTING_KEYS.ORDER_FAILED,
+  );
 }
 
 export async function closeMessaging(): Promise<void> {

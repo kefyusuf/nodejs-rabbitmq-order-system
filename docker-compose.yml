@@ -77,6 +77,25 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  notification:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: orders-notification
+    command: sh -c "npx prisma generate && npm run dev:notification"
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      RABBITMQ_EXCHANGE: orders
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   rabbitmq_data:

@@ -12,6 +12,7 @@ export const QUEUES = {
   ORDER_PROCESSING: 'order.processing',
   ORDER_PROCESSING_RETRY: 'order.processing.retry',
   ORDER_PROCESSING_DLQ: 'order.processing.dlq',
+  ORDER_NOTIFICATIONS: 'order.notifications',
 } as const;
 
 export const CONSUMER_SETTINGS = {
