@@ -1,0 +1,16 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "dist/api/index.js"]
+    environment:
+      NODE_ENV: production
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "dist/worker/index.js"]
+    environment:
+      NODE_ENV: production
