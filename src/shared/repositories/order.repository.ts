@@ -1,4 +1,5 @@
 import { Prisma, OrderStatus as PrismaOrderStatus } from '@prisma/client';
+import { calculateOrderTotal } from '../domain/order';
 import { prisma } from '../db/prisma';
 import { CreateOrderInput, OrderStatus } from '../types/order';
 
@@ -34,10 +35,7 @@ function mapOrder(order: {
 
 export class OrderRepository {
   async create(input: CreateOrderInput): Promise<OrderRecord> {
-    const totalAmount = input.items.reduce(
-      (sum, item) => sum + item.quantity * item.unitPrice,
-      0,
-    );
+    const totalAmount = calculateOrderTotal(input.items);
 
     const order = await prisma.order.create({
       data: {

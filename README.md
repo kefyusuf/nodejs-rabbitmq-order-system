@@ -16,12 +16,12 @@ Client → Fastify API → PostgreSQL (PENDING)
 
 ### Services
 
-| Service | Port | Description |
-|---------|------|-------------|
-| **api** | 3000 | REST API — create and query orders |
-| **worker** | — | RabbitMQ consumer — process orders |
-| **postgres** | 5432 | Order database |
-| **rabbitmq** | 5672 / 15672 | Message broker + Management UI |
+| Service      | Port         | Description                        |
+| ------------ | ------------ | ---------------------------------- |
+| **api**      | 3000         | REST API — create and query orders |
+| **worker**   | —            | RabbitMQ consumer — process orders |
+| **postgres** | 5432         | Order database                     |
+| **rabbitmq** | 5672 / 15672 | Message broker + Management UI     |
 
 ### RabbitMQ Topology
 
@@ -128,11 +128,11 @@ docker/            # Docker entrypoint scripts
 
 ## Scripts
 
-| Script | Description |
-|--------|-------------|
-| `npm run dev:api` | API development mode (tsx watch) |
-| `npm run dev:worker` | Worker development mode |
-| `npm run build` | Compile TypeScript |
-| `npm run docker:up` | Start Docker services |
-| `npm run docker:down` | Stop Docker services |
-| `npm run db:migrate` | Apply migrations |
+| Script                | Description                      |
+| --------------------- | -------------------------------- |
+| `npm run dev:api`     | API development mode (tsx watch) |
+| `npm run dev:worker`  | Worker development mode          |
+| `npm run build`       | Compile TypeScript               |
+| `npm run docker:up`   | Start Docker services            |
+| `npm run docker:down` | Stop Docker services             |
+| `npm run db:migrate`  | Apply migrations                 |

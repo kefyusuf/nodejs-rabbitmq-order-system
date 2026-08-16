@@ -8,6 +8,11 @@
     "dev:worker": "tsx watch src/worker/index.ts",
     "dev:notification": "tsx watch src/notification-worker/index.ts",
     "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "start:api": "node dist/api/index.js",
     "start:worker": "node dist/worker/index.js",
     "start:notification": "node dist/notification-worker/index.js",
@@ -33,10 +38,16 @@
     "zod": "^4.0.17"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/amqplib": "^0.10.7",
     "@types/node": "^24.3.0",
+    "eslint": "^10.8.1",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.6",
     "prisma": "^6.14.0",
     "tsx": "^4.20.4",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.67.0",
+    "vitest": "^4.1.10"
   }
 }

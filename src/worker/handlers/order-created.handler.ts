@@ -1,4 +1,8 @@
-import { OrderCreatedEvent, OrderProcessedEvent } from '../../shared/types/order';
+import {
+  OrderCreatedEvent,
+  OrderProcessedEvent,
+} from '../../shared/types/order';
+import { resolveOrderStatus } from '../../shared/domain/order';
 import { orderRepository } from '../../shared/repositories/order.repository';
 import { publishMessage } from '../../shared/messaging/publisher';
 import { ROUTING_KEYS } from '../../shared/messaging/constants';
@@ -16,8 +20,7 @@ export async function handleOrderCreated(
 
   await sleep(PROCESSING_DELAY_MS);
 
-  const shouldFail = event.totalAmount > 10000;
-  const status = shouldFail ? 'FAILED' : 'CONFIRMED';
+  const status = resolveOrderStatus(event.totalAmount);
 
   await orderRepository.updateStatus(event.orderId, status);
 

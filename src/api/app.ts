@@ -1,8 +1,12 @@
-import Fastify from 'fastify';
+import Fastify, { FastifyHttpOptions } from 'fastify';
 import { orderRoutes } from './routes/orders';
 
-export async function buildApp() {
-  const app = Fastify({ logger: true });
+export interface BuildAppOptions {
+  logger?: FastifyHttpOptions<never>['logger'];
+}
+
+export async function buildApp(options: BuildAppOptions = {}) {
+  const app = Fastify({ logger: options.logger ?? true });
 
   app.get('/health', async () => ({
     status: 'ok',
