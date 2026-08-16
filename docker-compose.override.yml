@@ -1,22 +1,25 @@
-# Production overlay. The app services run the compiled dist/ output from
-# the multi-stage Dockerfile — no source bind mounts.
-# Usage:
+# Development overlay, loaded automatically by `docker compose up`.
+# App services run from source with tsx watch; combine with the production
+# overlay instead via:
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 services:
   api:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     container_name: orders-api
-    command: ['node', 'dist/api/index.js']
+    command: sh -c 'npx prisma generate && npx prisma migrate deploy && npm run dev:api'
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       PORT: 3000
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       RABBITMQ_EXCHANGE: orders
     ports:
       - '3000:3000'
+    volumes:
+      - .:/app
+      - /app/node_modules
     depends_on:
       postgres:
         condition: service_healthy
@@ -27,14 +30,17 @@ services:
   worker:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     container_name: orders-worker
-    command: ['node', 'dist/worker/index.js']
+    command: sh -c 'npx prisma generate && npx prisma migrate deploy && npm run dev:worker'
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       RABBITMQ_EXCHANGE: orders
+    volumes:
+      - .:/app
+      - /app/node_modules
     depends_on:
       postgres:
         condition: service_healthy
@@ -45,14 +51,17 @@ services:
   notification:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     container_name: orders-notification
-    command: ['node', 'dist/notification-worker/index.js']
+    command: sh -c 'npx prisma generate && npm run dev:notification'
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       RABBITMQ_EXCHANGE: orders
+    volumes:
+      - .:/app
+      - /app/node_modules
     depends_on:
       rabbitmq:
         condition: service_healthy
