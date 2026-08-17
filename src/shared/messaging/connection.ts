@@ -137,54 +137,65 @@ async function reconnectForever(): Promise<void> {
 
 async function assertTopology(ch: Channel): Promise<void> {
   await ch.assertExchange(EXCHANGE_NAME, 'topic', { durable: true });
-  await ch.assertExchange(DEAD_LETTER_EXCHANGE_NAME, 'direct', {
-    durable: true,
-  });
 
-  // Rejected messages from the main queue are dead-lettered to orders.dlx.
-  await ch.assertQueue(QUEUES.ORDER_PROCESSING, {
-    durable: true,
-    arguments: {
-      'x-dead-letter-exchange': DEAD_LETTER_EXCHANGE_NAME,
-      'x-dead-letter-routing-key': ROUTING_KEYS.ORDER_PROCESSING_DEAD,
-    },
-  });
-  await ch.bindQueue(
-    QUEUES.ORDER_PROCESSING,
-    EXCHANGE_NAME,
-    ROUTING_KEYS.ORDER_CREATED,
-  );
+  // beginner ('basic'): yalnızca ana kuyruk — retry/DLQ/notification yok.
+  if (env.TOPOLOGY === 'full') {
+    await ch.assertExchange(DEAD_LETTER_EXCHANGE_NAME, 'direct', {
+      durable: true,
+    });
 
-  // Expired retry messages are routed back to the main queue via the
-  // default exchange, preserving their headers (x-retry-count).
-  await ch.assertQueue(QUEUES.ORDER_PROCESSING_RETRY, {
-    durable: true,
-    arguments: {
-      'x-message-ttl': CONSUMER_SETTINGS.RETRY_DELAY_MS,
-      'x-dead-letter-exchange': '',
-      'x-dead-letter-routing-key': QUEUES.ORDER_PROCESSING,
-    },
-  });
+    // Rejected messages from the main queue are dead-lettered to orders.dlx.
+    await ch.assertQueue(QUEUES.ORDER_PROCESSING, {
+      durable: true,
+      arguments: {
+        'x-dead-letter-exchange': DEAD_LETTER_EXCHANGE_NAME,
+        'x-dead-letter-routing-key': ROUTING_KEYS.ORDER_PROCESSING_DEAD,
+      },
+    });
+    await ch.bindQueue(
+      QUEUES.ORDER_PROCESSING,
+      EXCHANGE_NAME,
+      ROUTING_KEYS.ORDER_CREATED,
+    );
 
-  await ch.assertQueue(QUEUES.ORDER_PROCESSING_DLQ, { durable: true });
-  await ch.bindQueue(
-    QUEUES.ORDER_PROCESSING_DLQ,
-    DEAD_LETTER_EXCHANGE_NAME,
-    ROUTING_KEYS.ORDER_PROCESSING_DEAD,
-  );
+    // Expired retry messages are routed back to the main queue via the
+    // default exchange, preserving their headers (x-retry-count).
+    await ch.assertQueue(QUEUES.ORDER_PROCESSING_RETRY, {
+      durable: true,
+      arguments: {
+        'x-message-ttl': CONSUMER_SETTINGS.RETRY_DELAY_MS,
+        'x-dead-letter-exchange': '',
+        'x-dead-letter-routing-key': QUEUES.ORDER_PROCESSING,
+      },
+    });
 
-  // Fan-out of processed order events to the notification worker.
-  await ch.assertQueue(QUEUES.ORDER_NOTIFICATIONS, { durable: true });
-  await ch.bindQueue(
-    QUEUES.ORDER_NOTIFICATIONS,
-    EXCHANGE_NAME,
-    ROUTING_KEYS.ORDER_CONFIRMED,
-  );
-  await ch.bindQueue(
-    QUEUES.ORDER_NOTIFICATIONS,
-    EXCHANGE_NAME,
-    ROUTING_KEYS.ORDER_FAILED,
-  );
+    await ch.assertQueue(QUEUES.ORDER_PROCESSING_DLQ, { durable: true });
+    await ch.bindQueue(
+      QUEUES.ORDER_PROCESSING_DLQ,
+      DEAD_LETTER_EXCHANGE_NAME,
+      ROUTING_KEYS.ORDER_PROCESSING_DEAD,
+    );
+
+    // Fan-out of processed order events to the notification worker.
+    await ch.assertQueue(QUEUES.ORDER_NOTIFICATIONS, { durable: true });
+    await ch.bindQueue(
+      QUEUES.ORDER_NOTIFICATIONS,
+      EXCHANGE_NAME,
+      ROUTING_KEYS.ORDER_CONFIRMED,
+    );
+    await ch.bindQueue(
+      QUEUES.ORDER_NOTIFICATIONS,
+      EXCHANGE_NAME,
+      ROUTING_KEYS.ORDER_FAILED,
+    );
+  } else {
+    await ch.assertQueue(QUEUES.ORDER_PROCESSING, { durable: true });
+    await ch.bindQueue(
+      QUEUES.ORDER_PROCESSING,
+      EXCHANGE_NAME,
+      ROUTING_KEYS.ORDER_CREATED,
+    );
+  }
 }
 
 export async function closeMessaging(): Promise<void> {

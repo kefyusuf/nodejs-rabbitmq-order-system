@@ -1,64 +1,21 @@
-# Development overlay, loaded automatically by `docker compose up`.
-# App services run from source with tsx watch; combine with the production
-# overlay instead via:
-#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# Development overlay (auto-loaded by `docker compose up`).
+# beginner: tek "app" servisi — api + worker aynı süreçte, in-memory store.
 services:
-  api:
+  app:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    container_name: orders-api
-    command: sh -c 'npx prisma generate && npx prisma migrate deploy && npm run dev:api'
+    container_name: orders-app
+    command: sh -c 'npm run dev'
     environment:
       NODE_ENV: development
       PORT: 3000
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       RABBITMQ_EXCHANGE: orders
+      STORE: in-memory
+      TOPOLOGY: basic
     ports:
       - '3000:3000'
-    volumes:
-      - .:/app
-      - /app/node_modules
-    depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-    restart: unless-stopped
-
-  worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.dev
-    container_name: orders-worker
-    command: sh -c 'npx prisma generate && npx prisma migrate deploy && npm run dev:worker'
-    environment:
-      NODE_ENV: development
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
-      RABBITMQ_EXCHANGE: orders
-    volumes:
-      - .:/app
-      - /app/node_modules
-    depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-    restart: unless-stopped
-
-  notification:
-    build:
-      context: .
-      dockerfile: Dockerfile.dev
-    container_name: orders-notification
-    command: sh -c 'npx prisma generate && npm run dev:notification'
-    environment:
-      NODE_ENV: development
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
-      RABBITMQ_EXCHANGE: orders
     volumes:
       - .:/app
       - /app/node_modules

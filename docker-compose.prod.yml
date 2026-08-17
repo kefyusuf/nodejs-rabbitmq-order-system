@@ -1,58 +1,23 @@
-# Production overlay. The app services run the compiled dist/ output from
-# the multi-stage Dockerfile — no source bind mounts.
-# Usage:
+# Production overlay (beginner). The app image is the compiled dist/ from
+# the multi-stage Dockerfile — no source bind mounts. STORE=in-memory is
+# overridden to postgres only in the hero tier.
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 services:
-  api:
+  app:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: orders-api
-    command: ['node', 'dist/api/index.js']
+    container_name: orders-app
+    command: ['node', 'dist/server.js']
     environment:
       NODE_ENV: production
       PORT: 3000
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       RABBITMQ_EXCHANGE: orders
+      STORE: in-memory
+      TOPOLOGY: basic
     ports:
       - '3000:3000'
-    depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-    restart: unless-stopped
-
-  worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: orders-worker
-    command: ['node', 'dist/worker/index.js']
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
-      RABBITMQ_EXCHANGE: orders
-    depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-    restart: unless-stopped
-
-  notification:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: orders-notification
-    command: ['node', 'dist/notification-worker/index.js']
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
-      RABBITMQ_EXCHANGE: orders
     depends_on:
       rabbitmq:
         condition: service_healthy

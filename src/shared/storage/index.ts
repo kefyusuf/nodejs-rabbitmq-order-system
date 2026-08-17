@@ -1,22 +1,13 @@
 import { env } from '../config/env';
 import type { OrderStore } from './OrderStore';
 import { InMemoryOrderStore } from './in-memory';
-import { RedisOrderStore } from './redis';
-import { PostgresOrderStore } from './postgres';
 
 /**
- * STORE env değerine göre adapter seçilir.
- *
- *  in-memory  : beginner (tek süreç)
- *  redis      : mid     (ioredis, çok süreçli)
- *  postgres   : hero    (Prisma, varsayılan)
+ * beginner seviyesinde yalnızca in‑memory adapter vardır.
+ * mid/hero seviyelerinde redis/postgres adapter'ları eklenir.
  */
 export function createOrderStore(): OrderStore {
   switch (env.STORE) {
-    case 'redis':
-      return new RedisOrderStore(env.REDIS_URL);
-    case 'postgres':
-      return new PostgresOrderStore();
     case 'in-memory':
     default:
       return new InMemoryOrderStore();
