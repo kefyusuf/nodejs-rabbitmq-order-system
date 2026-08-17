@@ -11,6 +11,8 @@ export default defineConfig({
         'postgresql://postgres:postgres@localhost:5432/orders?schema=public',
       RABBITMQ_URL: 'amqp://guest:guest@localhost:5672',
       RABBITMQ_EXCHANGE: 'orders',
+      STORE: 'in-memory',
+      REDIS_URL: 'redis://localhost:6379',
     },
   },
 });
