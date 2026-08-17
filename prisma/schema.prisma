@@ -24,3 +24,25 @@ model Order {
 
   @@map("orders")
 }
+
+// Transactional outbox: order + event are written in one DB transaction,
+// then a relay publishes the event to RabbitMQ (at-least-once delivery).
+model Outbox {
+  id            String   @id @default(uuid())
+  aggregateType String
+  aggregateId   String
+  type          String
+  payload       Json
+  published     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  @@index([published, createdAt])
+}
+
+// Consumer idempotency: a message id is recorded once, so redeliveries
+// (retries, reconnects) are skipped instead of being processed twice.
+model ProcessedMessage {
+  messageId String   @id
+  queue     String
+  createdAt DateTime @default(now())
+}

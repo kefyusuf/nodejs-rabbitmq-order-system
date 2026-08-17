@@ -1,19 +1,27 @@
 import { Channel, ConsumeMessage } from 'amqplib';
-import { disconnectPrisma } from '../shared/db/prisma';
-import {
-  closeMessaging,
-  getChannel,
-  onMessagingReconnected,
-} from '../shared/messaging/connection';
+import { createHash } from 'node:crypto';
+import { disconnectPrisma, prisma } from '../shared/db/prisma';
+import { closeMessaging, getChannel } from '../shared/messaging/connection';
 import { CONSUMER_SETTINGS, QUEUES } from '../shared/messaging/constants';
+import { orderEventsProcessedTotal } from '../shared/observability/metrics';
+import { initTracing } from '../shared/observability/tracing';
 import { OrderCreatedEvent } from '../shared/types/order';
 import { handleOrderCreated } from './handlers/order-created.handler';
+
+initTracing('order-worker');
 
 const RETRY_HEADER = 'x-retry-count';
 
 function getRetryCount(message: ConsumeMessage): number {
   const value = message.properties.headers?.[RETRY_HEADER];
   return typeof value === 'number' ? value : 0;
+}
+
+function getMessageId(message: ConsumeMessage): string {
+  if (message.properties.messageId) {
+    return message.properties.messageId;
+  }
+  return createHash('sha256').update(message.content).digest('hex');
 }
 
 async function processMessage(
@@ -24,11 +32,25 @@ async function processMessage(
     return;
   }
 
-  // The channel passed in is the one the message was delivered on, so a
-  // reconnect that replaced the singleton mid-flight cannot steal the ack.
+  const messageId = getMessageId(message);
+
+  // Idempotency: skip redeliveries that were already processed
+  // (retries after a crash, or reconnects that replay unacked messages).
+  const already = await prisma.processedMessage.findUnique({
+    where: { messageId },
+  });
+  if (already) {
+    channel.ack(message);
+    return;
+  }
+
   try {
     const event = JSON.parse(message.content.toString()) as OrderCreatedEvent;
     await handleOrderCreated(event);
+    await prisma.processedMessage.create({
+      data: { messageId, queue: QUEUES.ORDER_PROCESSING },
+    });
+    orderEventsProcessedTotal.inc();
     channel.ack(message);
   } catch (error) {
     const retryCount = getRetryCount(message);
@@ -69,14 +91,6 @@ async function startConsuming(): Promise<void> {
     `Worker listening on queue: ${QUEUES.ORDER_PROCESSING} (prefetch: ${CONSUMER_SETTINGS.PREFETCH_COUNT})`,
   );
 }
-
-// After a reconnect the old channel (and its consumer) is gone;
-// re-register the consumer on the fresh channel.
-onMessagingReconnected(() => {
-  void startConsuming().catch((error) => {
-    console.error('Failed to restart consumer after reconnect:', error);
-  });
-});
 
 async function shutdown(signal: string): Promise<void> {
   console.log(`Received ${signal}, shutting down gracefully...`);

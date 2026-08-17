@@ -1,25 +1,65 @@
-# Development overlay, loaded automatically by `docker compose up`.
-# App services run from source with tsx watch; combine with the production
-# overlay instead via:
-#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# Local development overlay (auto-loaded by `docker compose up` alongside
+# docker-compose.yml). Spins up the full hero stack but shifts the HOST ports
+# so they don't collide with other projects already using the standard ports.
+#
+#   docker compose up -d --build
+#
+# Port map (host -> container):
+#   API           8080 -> 3000   (standard API port is 3000)
+#   PostgreSQL    5433 -> 5432  (standard is 5432)
+#   RabbitMQ      5673 -> 5672  (standard AMQP port is 5672)
+#   RabbitMQ mgmt 15673 -> 15672 (standard is 15672)
+#
+# Container-internal traffic (between services) always uses the standard
+# ports, so DATABASE_URL / RABBITMQ_URL stay unchanged.
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: orders-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: orders
+    ports:
+      - '5433:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d orders']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: orders-rabbitmq
+    ports:
+      - '5673:5672'
+      - '15673:15672'
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   api:
     build:
       context: .
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile
     container_name: orders-api
-    command: sh -c 'npx prisma generate && npx prisma migrate deploy && npm run dev:api'
+    command: ['node', 'dist/api/index.js']
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       PORT: 3000
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       RABBITMQ_EXCHANGE: orders
+      JWT_SECRET: dev-insecure-change-me
+      # OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     ports:
-      - '3000:3000'
-    volumes:
-      - .:/app
-      - /app/node_modules
+      - '8080:3000'
     depends_on:
       postgres:
         condition: service_healthy
@@ -30,17 +70,14 @@ services:
   worker:
     build:
       context: .
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile
     container_name: orders-worker
-    command: sh -c 'npx prisma generate && npx prisma migrate deploy && npm run dev:worker'
+    command: ['node', 'dist/worker/index.js']
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       RABBITMQ_EXCHANGE: orders
-    volumes:
-      - .:/app
-      - /app/node_modules
     depends_on:
       postgres:
         condition: service_healthy
@@ -51,18 +88,37 @@ services:
   notification:
     build:
       context: .
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile
     container_name: orders-notification
-    command: sh -c 'npx prisma generate && npm run dev:notification'
+    command: ['node', 'dist/notification-worker/index.js']
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       RABBITMQ_EXCHANGE: orders
-    volumes:
-      - .:/app
-      - /app/node_modules
     depends_on:
       rabbitmq:
         condition: service_healthy
     restart: unless-stopped
+
+  relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: orders-relay
+    command: ['node', 'dist/outbox-relay/index.js']
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      RABBITMQ_EXCHANGE: orders
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  rabbitmq_data:

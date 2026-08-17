@@ -15,6 +15,10 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       RABBITMQ_EXCHANGE: orders
+      # Change this before any non-local deployment.
+      JWT_SECRET: dev-insecure-change-me
+      # Optional: set to an OTLP HTTP endpoint to export traces.
+      # OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     ports:
       - '3000:3000'
     depends_on:
@@ -54,6 +58,24 @@ services:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       RABBITMQ_EXCHANGE: orders
     depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: orders-relay
+    command: ['node', 'dist/outbox-relay/index.js']
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      RABBITMQ_EXCHANGE: orders
+    depends_on:
+      postgres:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
     restart: unless-stopped

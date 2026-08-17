@@ -2,12 +2,14 @@ import { Prisma } from '@prisma/client';
 import { OrderStatus as PrismaOrderStatus } from '@prisma/client';
 import { calculateOrderTotal } from '../domain/order';
 import { prisma } from '../db/prisma';
+import { ROUTING_KEYS } from '../messaging/constants';
 import { CreateOrderInput, OrderStatus } from '../types/order';
 import { OrderRecord, OrderStore } from './OrderStore';
 
 /**
  * Hero seviyesi — PostgreSQL (Prisma) kalıcılık.
- * Mevcut OrderRepository mantığının aynen taşınmış hâli.
+ * Order, aynı transaction içinde Outbox kaydıyla yazılır (transactional
+ * outbox); ayrı bir relay servisi event'i RabbitMQ'ya yayınlar.
  */
 function mapOrder(order: {
   id: string;
@@ -31,14 +33,35 @@ function mapOrder(order: {
 
 export class PostgresOrderStore implements OrderStore {
   async create(input: CreateOrderInput): Promise<OrderRecord> {
-    const order = await prisma.order.create({
-      data: {
-        customerName: input.customerName,
-        items: input.items,
-        totalAmount: calculateOrderTotal(input.items),
-        status: 'PENDING',
-      },
+    const totalAmount = calculateOrderTotal(input.items);
+
+    const order = await prisma.$transaction(async (tx) => {
+      const created = await tx.order.create({
+        data: {
+          customerName: input.customerName,
+          items: input.items,
+          totalAmount,
+          status: 'PENDING',
+        },
+      });
+
+      await tx.outbox.create({
+        data: {
+          aggregateType: 'order',
+          aggregateId: created.id,
+          type: ROUTING_KEYS.ORDER_CREATED,
+          payload: {
+            orderId: created.id,
+            customerName: created.customerName,
+            totalAmount: Number(created.totalAmount),
+            createdAt: created.createdAt.toISOString(),
+          },
+        },
+      });
+
+      return created;
     });
+
     return mapOrder(order);
   }
 

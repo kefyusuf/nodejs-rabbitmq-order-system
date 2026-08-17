@@ -8,19 +8,13 @@ vi.mock('../../../src/shared/repositories/order.repository', () => ({
   },
 }));
 
-vi.mock('../../../src/shared/messaging/publisher', () => ({
-  publishMessage: vi.fn(),
-}));
-
 import { buildApp } from '../../../src/api/app';
 import { orderRepository } from '../../../src/shared/repositories/order.repository';
-import { publishMessage } from '../../../src/shared/messaging/publisher';
 import { OrderRecord } from '../../../src/shared/repositories/order.repository';
 
 const mockedCreate = vi.mocked(orderRepository.create);
 const mockedFindById = vi.mocked(orderRepository.findById);
 const mockedFindAll = vi.mocked(orderRepository.findAll);
-const mockedPublish = vi.mocked(publishMessage);
 
 function buildOrder(overrides: Partial<OrderRecord> = {}): OrderRecord {
   const now = new Date('2026-01-01T00:00:00Z');
@@ -41,18 +35,24 @@ const validBody = {
   items: [{ productId: 'p-1', name: 'Keyboard', quantity: 1, unitPrice: 500 }],
 };
 
+async function getToken(app: Awaited<ReturnType<typeof buildApp>>): Promise<string> {
+  const res = await app.inject({ method: 'POST', url: '/auth/token', payload: { username: 'tester' } });
+  return (res.json() as { token: string }).token;
+}
+
 describe('order routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockedPublish.mockResolvedValue(undefined);
   });
 
   it('POST /orders returns 400 for invalid payloads', async () => {
     const app = await buildApp({ logger: false });
+    const token = await getToken(app);
 
     const response = await app.inject({
       method: 'POST',
       url: '/orders',
+      headers: { authorization: `Bearer ${token}` },
       payload: { customerName: '', items: [] },
     });
 
@@ -61,13 +61,15 @@ describe('order routes', () => {
     await app.close();
   });
 
-  it('POST /orders persists the order and publishes order.created', async () => {
+  it('POST /orders persists the order and stores the event in the outbox', async () => {
     const app = await buildApp({ logger: false });
+    const token = await getToken(app);
     mockedCreate.mockResolvedValue(buildOrder());
 
     const response = await app.inject({
       method: 'POST',
       url: '/orders',
+      headers: { authorization: `Bearer ${token}` },
       payload: validBody,
     });
 
@@ -76,18 +78,13 @@ describe('order routes', () => {
       customerName: 'Alice',
       items: validBody.items,
     });
-    expect(mockedPublish).toHaveBeenCalledWith(
-      'order.created',
-      expect.objectContaining({ orderId: 'order-1', totalAmount: 500 }),
-    );
-    expect(response.json().eventPublished).toBe(true);
+    expect(response.json().eventStored).toBe(true);
     await app.close();
   });
 
-  it('POST /orders still returns 201 when the broker is unreachable', async () => {
+  it('POST /orders returns 401 without a token', async () => {
     const app = await buildApp({ logger: false });
     mockedCreate.mockResolvedValue(buildOrder());
-    mockedPublish.mockRejectedValue(new Error('broker down'));
 
     const response = await app.inject({
       method: 'POST',
@@ -95,8 +92,7 @@ describe('order routes', () => {
       payload: validBody,
     });
 
-    expect(response.statusCode).toBe(201);
-    expect(response.json().eventPublished).toBe(false);
+    expect(response.statusCode).toBe(401);
     await app.close();
   });
 
@@ -112,9 +108,7 @@ describe('order routes', () => {
 
   it('GET /orders/:id returns the order when it exists', async () => {
     const app = await buildApp({ logger: false });
-    mockedFindById.mockResolvedValue(
-      buildOrder({ status: 'CONFIRMED', id: 'known' }),
-    );
+    mockedFindById.mockResolvedValue(buildOrder({ status: 'CONFIRMED', id: 'known' }));
 
     const response = await app.inject({ method: 'GET', url: '/orders/known' });
 

@@ -3,50 +3,56 @@
 A compact but extensible event-driven system built around an order placement
 flow. It demonstrates how a Fastify REST API, a PostgreSQL database and three
 RabbitMQ-backed services cooperate to process orders asynchronously — with
-retry, dead-lettering and automatic reconnection built in from the start.
+retry, dead-lettering, automatic reconnection, **transactional outbox**,
+**idempotent consumers**, **JWT auth**, **OpenTelemetry** tracing and
+**Prometheus** metrics.
 
 ## Architecture
 
 ```
-                          ┌─────────────────────────────────────────────┐
-                          │                 RabbitMQ                    │
-   Client                 │                                             |
-     │                    │  exchange: orders (topic)                   │
-     ▼                    │    order.created ──▶ order.processing       │
- ┌──────────┐   HTTP      │                       │        │            │
- │ Fastify  │◀────────────┼──▶ PostgreSQL ──┐      │   retries exhausted │
- │   API    │             │                 │      ▼            ▼      │
- └──────────┘             │    order.processing.retry (TTL)  orders.dlx │
-                          │                       │                     │
-                          │    order.confirmed ──▶┐   order.processing.dlq
-                          │    order.failed   ──▶ ├──────────────┐      │
-                          │                       ▼              ▼      │
-                          │              order.notifications          │
-                          └─────────────────────────────────────────────┘
-                                   ▲                ▲          ▲
-                                   │                │          │
-                     ┌─────────────┴──┐   ┌─────────┴───┐  ┌───┴──────────┐
-                     │  Order Worker  │   │ Notification │  │  (inspect    │
-                     │  (consumer)    │   │ Worker       │  │   DLQ here)  │
-                     │  updates order │   │ sends mail   │  └──────────────┘
-                     │  status        │   │ (simulated)  │
-                     └───────┬────────┘   └──────────────┘
-                             │
-                             ▼
-                        PostgreSQL
+                         ┌─────────────────────────────────────────────────────┐
+                         │                      RabbitMQ                        │
+  Client                 │                                                     |
+    │   POST /orders     │   exchange: orders (topic)                          │
+    │  (Bearer token)    │     order.created ──▶ order.processing              │
+    ▼                    │                        │          │                  │
+  ┌──────────┐  HTTP     │                        │   retries exhausted         │
+  │ Fastify  │◀──────────┼──▶ PostgreSQL ──▶ Outbox ─┤          │               │
+  │   API    │           │        ▲                │ ▲         ▼          ▼      │
+  │ (JWT +   │           │        │                │ │ orders.dlx  order.processing.dlq
+  │  /metrics│)          │   Outbox Relay  ────────┘ │                            │
+  └──────────┘           │   (polls Outbox,            order.confirmed ──▶┐       │
+                         │    publishes events)       order.failed   ──▶ ├──────┐ │
+                         │                                              ▼      ▼ │ │
+                         │                                    order.notifications│
+                         └────────────────────────────────────────────┼────────┘│
+                                          ▲                             │         │
+                              ┌───────────┴──┐              ┌────────────┴───┐  ┌──┴──────────┐
+                              │  Order Worker │             │ Notification    │  │ (inspect    │
+                              │  (consumer,   │             │ Worker          │  │  DLQ here)  │
+                              │  idempotent)  │             │ sends mail      │  └─────────────┘
+                              │  updates order│             │ (simulated)     │
+                              └───────┬───────┘             └─────────────────┘
+                                      │
+                                      ▼
+                                 PostgreSQL
 ```
 
 ### The journey of an order
 
-1. `POST /orders` — the API validates the payload (zod), calculates the
-   total and saves the order as `PENDING` in PostgreSQL.
-2. The API publishes an `order.created` event to the `orders` topic
-   exchange. If the broker is unreachable the request still succeeds with
-   `eventPublished: false` (see [Reliability](#reliability)).
-3. The **order worker** consumes the event from `order.processing`
-   (one message at a time via prefetch), simulates processing and applies
-   the business rule: totals above 10,000 are `FAILED`, everything else is
-   `CONFIRMED`.
+1. `POST /orders` — the API validates the payload (zod), calculates the total
+   and saves the order as `PENDING` in PostgreSQL **and** inserts an
+   `order.created` row into the **Outbox** in a single database transaction.
+   The request requires a JWT bearer token.
+2. The **outbox relay** polls the Outbox for unpublished rows, publishes
+   `order.created` to the `orders` topic exchange, then marks the row
+   published. This is the **transactional outbox** pattern: the event is never
+   lost even if the broker is down at write time.
+3. The **order worker** consumes the event from `order.processing` (one message
+   at a time via prefetch), simulates processing and applies the business
+   rule: totals above 10,000 are `FAILED`, everything else is `CONFIRMED`. It
+   deduplicates redeliveries via a `processed_messages` table (**idempotent
+   consumer**).
 4. The worker publishes `order.confirmed` or `order.failed`.
 5. The **notification worker** consumes those events and sends a simulated
    customer email.
@@ -54,13 +60,22 @@ retry, dead-lettering and automatic reconnection built in from the start.
 
 ### Services
 
-| Service          | Port         | Description                                  |
-| ---------------- | ------------ | -------------------------------------------- |
-| **api**          | 3000         | Fastify REST API — create and query orders   |
-| **worker**       | —            | Consumer — process orders, update status     |
-| **notification** | —            | Consumer — react to processed orders         |
-| **postgres**     | 5432         | Order database (Prisma)                      |
-| **rabbitmq**     | 5672 / 15672 | Message broker + Management UI (guest/guest) |
+| Service          | Port           | Description                                       |
+| ---------------- | -------------- | ------------------------------------------------- |
+| **api**          | 3000 (8080 dev)| Fastify REST API — create/query orders, JWT, metrics |
+| **worker**       | —              | Consumer — process orders, update status (idempotent) |
+| **notification** | —              | Consumer — react to processed orders              |
+| **relay**        | —              | Outbox → RabbitMQ publisher                       |
+| **postgres**     | 5432 (5433 dev)| Order database + Outbox (Prisma)                  |
+| **rabbitmq**     | 5672 / 15672   | Message broker + Management UI (guest/guest)      |
+
+> **Standard ports.** The canonical ports are **API 3000**, **RabbitMQ 5672**
+> (AMQP) / **15672** (Management UI) and **PostgreSQL 5432** (also common:
+> 8080 / 8000 for HTTP services). The local `docker-compose.override.yml`
+> shifts the **host** ports (API → 8080, Postgres → 5433, RabbitMQ → 5673 /
+> 15673) so this stack doesn't collide with other projects already using the
+> standard ports. Container-internal traffic always uses the standard ports,
+> so `DATABASE_URL` / `RABBITMQ_URL` stay unchanged.
 
 ## RabbitMQ topology
 
@@ -73,49 +88,74 @@ retry, dead-lettering and automatic reconnection built in from the start.
 | `order.processing.dlq`   | queue bound to `orders.dlx`              | Messages that exhausted 3 retries      |
 | `order.notifications`    | queue bound to `order.confirmed/failed`  | Notifications fan-out                  |
 
-### Reliability
+## Reliability & correctness
 
+- **Transactional outbox:** the order and its event are written together. The
+  relay guarantees at-least-once delivery; duplicate deliveries are absorbed
+  downstream by consumer idempotency.
+- **Idempotent consumers:** the worker records every processed `messageId` in a
+  `processed_messages` table and skips duplicates — safe against broker
+  redeliveries and relay retries.
 - **Bounded retries:** a failing message is republished to the retry queue
   with an incremented `x-retry-count` header (5s delay per attempt). After
   3 attempts it is rejected and lands in the DLQ for inspection.
-- **Prefetch(1):** the worker acknowledges one message at a time, so a
-  poison message cannot flood the process.
-- **Reconnect:** both workers re-establish their consumers automatically
-  after a broker outage (exponential backoff).
-- **Broker outage on write:** `POST /orders` persists first, then publishes.
-  If publishing fails, the response carries `eventPublished: false` and the
-  order stays `PENDING` — a deliberate trade-off; the transactional outbox
-  pattern is on the roadmap.
+- **Prefetch(1):** the worker acknowledges one message at a time, so a poison
+  message cannot flood the process.
+- **Reconnect:** amqplib's built-in `recovery: true` re-establishes consumers
+  and publishers automatically after a broker outage.
+- **Observability:** Prometheus metrics are exposed at `GET /metrics`; optional
+  OpenTelemetry tracing activates when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 
 ## Quick start (Docker)
 
+### Local development (shifted ports, no conflicts)
+
 ```bash
-docker compose up -d          # infra + api + worker + notification (dev mode)
-docker compose logs -f api worker notification
+docker compose up -d --build        # base + docker-compose.override.yml (dev ports)
+docker compose logs -f api worker notification relay
 ```
 
-Once the services are healthy:
+- API: http://localhost:8080  (standard port is 3000 — see above)
+- RabbitMQ Management UI: http://localhost:15673 (guest / guest)
+
+### Standard ports (production-like)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
 
 - API: http://localhost:3000
 - RabbitMQ Management UI: http://localhost:15672 (guest / guest)
 
 > On Windows the bind-mounted dev services do not hot-reload on host file
-> changes; run `docker compose restart api worker notification` after
+> changes; run `docker compose restart api worker notification relay` after
 > editing source files.
 
 ## API usage
 
-### Health check
+### Health check & metrics
 
 ```bash
-curl http://localhost:3000/health
+curl http://localhost:8080/health
+curl http://localhost:8080/metrics        # Prometheus scrape endpoint
 ```
 
-### Create an order
+### Get a token
 
 ```bash
-curl -X POST http://localhost:3000/orders \
+curl -X POST http://localhost:8080/auth/token \
   -H "Content-Type: application/json" \
+  -d '{"username":"demo"}'
+# => { "token": "<jwt>" }
+```
+
+In this demo the token issuer is open; in production it would exchange real
+credentials. Requests to `POST /orders` must carry the token:
+
+```bash
+curl -X POST http://localhost:8080/orders \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <jwt>" \
   -d '{
     "customerName": "John Doe",
     "items": [
@@ -124,20 +164,22 @@ curl -X POST http://localhost:3000/orders \
   }'
 ```
 
-Returns `201 Created` with the `PENDING` order plus an `eventPublished`
-flag. Within a few seconds the worker sets the status to `CONFIRMED` — or
+Returns `201 Created` with the `PENDING` order plus an `eventStored: true`
+flag (the event is now safely in the outbox, the relay publishes it shortly
+after). Within a few seconds the worker sets the status to `CONFIRMED` — or
 `FAILED` when `totalAmount > 10000`.
 
 ### Query orders
 
 ```bash
-curl http://localhost:3000/orders          # list all
-curl http://localhost:3000/orders/{id}     # single order (404 if unknown)
+curl http://localhost:8080/orders          # list all
+curl http://localhost:8080/orders/{id}     # single order (404 if unknown)
 ```
 
 ## Local development (without full Docker)
 
-Start only the infrastructure, then run the services on your host:
+Start only the infrastructure, then run the services on your host. Use the
+shifted host ports (or change them back to standard) as needed.
 
 ```bash
 docker compose up -d postgres rabbitmq
@@ -149,7 +191,11 @@ npx prisma migrate dev
 npm run dev:api             # terminal 1
 npm run dev:worker          # terminal 2
 npm run dev:notification    # terminal 3
+npm run dev:relay           # terminal 4 (outbox -> RabbitMQ)
 ```
+
+Set `JWT_SECRET` in `.env` (any non-empty value; the app defaults to
+`dev-insecure-change-me`). For tracing, set `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
 ## Testing, linting, building
 
@@ -166,23 +212,28 @@ npm run build       # TypeScript -> dist/
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
-The production overlay runs the compiled `dist/` output from the
-multi-stage Dockerfile without source bind mounts. Migrations are applied
-by the image entrypoint on boot.
+The production overlay runs the compiled `dist/` output from the multi-stage
+Dockerfile without source bind mounts, and adds the `relay` service. Migrations
+are applied by the image entrypoint on boot. **Change `JWT_SECRET`** before any
+non-local deployment.
 
 ## Project structure
 
 ```
 src/
-├── api/                  # Fastify REST API (app, entrypoint, routes)
-├── worker/               # Order processing consumer
+├── api/                  # Fastify REST API (app, entrypoint, routes, auth plugin)
+├── worker/               # Order processing consumer (idempotent)
 ├── notification-worker/  # Notification consumer
+├── outbox-relay/         # Polls Outbox, publishes to RabbitMQ
+├── types/                # fastify module augmentation
 └── shared/
     ├── config/           # zod-validated environment
     ├── db/               # Prisma client singleton
     ├── domain/           # Pure business logic (order math/status rules)
     ├── messaging/        # Connection, topology, publisher, constants
-    ├── repositories/     # Database access
+    ├── observability/    # OpenTelemetry tracing + Prometheus metrics
+    ├── repositories/     # Database access (OrderStore adapter)
+    ├── storage/          # OrderStore implementations (in-memory/redis/postgres)
     └── types/            # zod schemas + event contracts
 tests/                    # Vitest tests mirroring src/
 prisma/                   # Schema and migrations
@@ -191,23 +242,23 @@ docker/                   # Entrypoint scripts
 
 ## Roadmap
 
-Done in the current version:
+Done in this version (hero tier):
 
-- [x] Event-driven core: API → worker → notification
+- [x] Event-driven core: API → relay → worker → notification
 - [x] Retry queue + dead letter queue + DLX
-- [x] Consumer prefetch and automatic reconnection
-- [x] Graceful publish-failure handling on writes
+- [x] Consumer prefetch and automatic reconnection (`recovery: true`)
+- [x] **Transactional outbox** — `order.created` is never lost when the broker is down
+- [x] **Idempotent consumers** — dedupe on `messageId`
+- [x] **JWT authentication** on the API (`/auth/token` issuer + `authenticate` decorator)
+- [x] **OpenTelemetry** tracing (opt-in via `OTEL_EXPORTER_OTLP_ENDPOINT`)
+- [x] **Prometheus** metrics (`/metrics`)
 - [x] Unit tests, lint, CI
 
 Next steps (roughly in order):
 
-- [ ] Transactional outbox so `order.created` is never lost when the
-      broker is down at write time
-- [ ] Idempotent consumers (dedupe on `orderId`) for safe redeliveries
 - [ ] Inventory service reserving stock on `order.created`
-- [ ] OpenTelemetry tracing across API and workers
-- [ ] JWT authentication on the API
 - [ ] Real email provider behind the notification worker
+- [ ] Horizontal scaling docs for the relay (multiple replicas, `SKIP LOCKED`)
 
 ## Scripts
 
@@ -216,6 +267,7 @@ Next steps (roughly in order):
 | `npm run dev:api`          | API in watch mode                     |
 | `npm run dev:worker`       | Order worker in watch mode            |
 | `npm run dev:notification` | Notification worker in watch mode     |
+| `npm run dev:relay`        | Outbox relay in watch mode            |
 | `npm test`                 | Run unit tests                        |
 | `npm run lint`             | ESLint                                |
 | `npm run build`            | Compile TypeScript                    |

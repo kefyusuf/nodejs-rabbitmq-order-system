@@ -1,12 +1,11 @@
 import { Channel, ConsumeMessage } from 'amqplib';
-import {
-  closeMessaging,
-  getChannel,
-  onMessagingReconnected,
-} from '../shared/messaging/connection';
+import { closeMessaging, getChannel } from '../shared/messaging/connection';
 import { CONSUMER_SETTINGS, QUEUES } from '../shared/messaging/constants';
+import { initTracing } from '../shared/observability/tracing';
 import { OrderProcessedEvent } from '../shared/types/order';
 import { handleOrderProcessed } from './handlers/order-processed.handler';
+
+initTracing('order-notification');
 
 async function processMessage(
   channel: Channel,
@@ -40,12 +39,6 @@ async function startConsuming(): Promise<void> {
     `Notification worker listening on queue: ${QUEUES.ORDER_NOTIFICATIONS}`,
   );
 }
-
-onMessagingReconnected(() => {
-  void startConsuming().catch((error) => {
-    console.error('Failed to restart consumer after reconnect:', error);
-  });
-});
 
 async function shutdown(signal: string): Promise<void> {
   console.log(`Received ${signal}, shutting down gracefully...`);

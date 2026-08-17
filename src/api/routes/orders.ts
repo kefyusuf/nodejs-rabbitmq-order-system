@@ -1,11 +1,13 @@
 import { FastifyInstance } from 'fastify';
 import { createOrderSchema } from '../../shared/types/order';
 import { orderRepository } from '../../shared/repositories/order.repository';
-import { publishMessage } from '../../shared/messaging/publisher';
-import { ROUTING_KEYS } from '../../shared/messaging/constants';
+import { ordersCreatedTotal } from '../../shared/observability/metrics';
+import { trace } from '@opentelemetry/api';
+
+const tracer = trace.getTracer('order-api');
 
 export async function orderRoutes(app: FastifyInstance): Promise<void> {
-  app.post('/orders', async (request, reply) => {
+  app.post('/orders', { preHandler: [app.authenticate] }, async (request, reply) => {
     const parsed = createOrderSchema.safeParse(request.body);
 
     if (!parsed.success) {
@@ -15,28 +17,22 @@ export async function orderRoutes(app: FastifyInstance): Promise<void> {
       });
     }
 
-    const order = await orderRepository.create(parsed.data);
+    const order = await tracer.startActiveSpan('createOrder', async (span) => {
+      try {
+        const created = await orderRepository.create(parsed.data);
+        span.setAttribute('order.id', created.id);
+        return created;
+      } finally {
+        span.end();
+      }
+    });
 
-    // The order is already persisted, so a broker outage must not fail the
-    // request. The order stays PENDING until an event gets through; a real
-    // fix is the outbox pattern (see README roadmap).
-    let eventPublished = true;
-    try {
-      await publishMessage(ROUTING_KEYS.ORDER_CREATED, {
-        orderId: order.id,
-        customerName: order.customerName,
-        totalAmount: order.totalAmount,
-        createdAt: order.createdAt.toISOString(),
-      });
-    } catch (error) {
-      eventPublished = false;
-      app.log.error(
-        error,
-        `Order ${order.id} persisted but order.created event could not be published`,
-      );
-    }
+    ordersCreatedTotal.inc();
 
-    return reply.status(201).send({ ...order, eventPublished });
+    // The event is persisted in the outbox (transactional outbox pattern);
+    // a separate relay service publishes it to RabbitMQ. The order stays
+    // PENDING until the worker processes it.
+    return reply.status(201).send({ ...order, eventStored: true });
   });
 
   app.get('/orders/:id', async (request, reply) => {
