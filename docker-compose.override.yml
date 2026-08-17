@@ -1,25 +1,25 @@
 # Development overlay (auto-loaded by `docker compose up`).
-# beginner: tek "app" servisi — api + worker aynı süreçte, in-memory store.
+# mid: redis + api/worker/notification ayrı servisler; kaynak kod bind mount
+# (hot reload) ve NODE_ENV=development.
 services:
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile.dev
-    container_name: orders-app
-    command: sh -c 'npm run dev'
+  api:
+    command: sh -c 'npm run dev:api'
     environment:
       NODE_ENV: development
-      PORT: 3000
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
-      RABBITMQ_EXCHANGE: orders
-      STORE: in-memory
-      TOPOLOGY: basic
-    ports:
-      - '3000:3000'
     volumes:
       - .:/app
       - /app/node_modules
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    restart: unless-stopped
+  worker:
+    command: sh -c 'npm run dev:worker'
+    environment:
+      NODE_ENV: development
+    volumes:
+      - .:/app
+      - /app/node_modules
+  notification:
+    command: sh -c 'npm run dev:notification'
+    environment:
+      NODE_ENV: development
+    volumes:
+      - .:/app
+      - /app/node_modules

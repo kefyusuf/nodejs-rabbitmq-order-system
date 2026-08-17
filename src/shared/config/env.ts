@@ -4,9 +4,9 @@ import { z } from 'zod';
 loadEnv();
 
 /**
- * beginner seviyesi: STORE=in-memory (varsayılan), DATABASE_URL gerekmez.
- * mid/hero: STORE=redis/postgres. Topoloji beginner için 'basic',
- * gelişmiş seviyeler için 'full' (DLX/retry/DLQ/notifications) ayarlanır.
+ * mid seviyesi: STORE=in-memory|redis (varsayılan in-memory),
+ * TOPOLOGY='full' (DLX/retry/DLQ + notification fan-out).
+ * hero'da postgres + transactional outbox eklenir.
  */
 const envSchema = z
   .object({
@@ -17,14 +17,12 @@ const envSchema = z
     DATABASE_URL: z.string().min(1).optional(),
     RABBITMQ_URL: z.string().min(1),
     RABBITMQ_EXCHANGE: z.string().default('orders'),
-    STORE: z.enum(['in-memory', 'redis', 'postgres']).default('in-memory'),
+    STORE: z.enum(['in-memory', 'redis']).default('in-memory'),
     REDIS_URL: z.string().default('redis://localhost:6379'),
-    TOPOLOGY: z.enum(['basic', 'full']).default('basic'),
+    TOPOLOGY: z.enum(['basic', 'full']).default('full'),
   })
-  .refine(
-    (v) =>
-      v.STORE === 'in-memory' || v.STORE === 'redis' ? true : !!v.DATABASE_URL,
-    { message: 'DATABASE_URL gerekir (STORE=postgres)' },
-  );
+  .refine((v) => (v.STORE === 'redis' ? !!v.REDIS_URL : true), {
+    message: 'REDIS_URL gerekir (STORE=redis)',
+  });
 
 export const env = envSchema.parse(process.env);

@@ -1,87 +1,86 @@
-# Node.js + TypeScript + Fastify + RabbitMQ — Sipariş Sistemi (beginner)
+# nodejs-rabbitmq — Order Placement API (mid tier)
 
-Bu dal **temel seviyenin (beginner)** çalışan hâlidir. Tek bir node sürecinde
-Fastify API + RabbitMQ consumer bir arada; veritabanı yok, veri **hafızada
-(in‑memory)** tutulur. RabbitMQu göstermek için yeter.
+Fastify + RabbitMQ order API. This is the **mid** tier: a pluggable storage
+adapter, a **Redis** store, a **full RabbitMQ topology** (retries / dead-letter /
+notifications) and **split processes** (API, worker, notification).
 
-> ⚠️ Daha gelişmiş seviyeler: `mid` dalı (redis + retry/DLQ + notification),
-> `hero`/`main` dalı (postgres + outbox + idempotency + auth + otel).
-> `git checkout mid` / `git checkout main`.
+| Tier | Branch / tag | Storage | Topology | Processes |
+| ---- | ------------ | ------- | -------- | --------- |
+| beginner | `git checkout beginner` (`v0.1.0`) | in-memory | basic | 1 (api+worker) |
+| **mid (you are here)** | `git checkout mid` (`v0.2.0`) | in-memory / redis | full | 3 (api, worker, notification) |
+| hero | `main` (`v0.3.0`) | in-memory / redis / postgres + outbox | full | 3 + auth + observability |
 
-## Ne işe yarıyor? (sipariş akışı)
+## What changed vs beginner
 
-```
-       ┌────────┐  POST /orders   ┌──────────┐  order.created
-       │  Sen   │ ──────────────▶ │ Fastify  │ ───────────▶ RabbitMQ
-       │(curl)  │                 │  API     │               │
-       └────────┘                 └──────────┘               │
-                                                               ▼
-                                                       ┌────────────┐
-                                                       │  Worker    │  (aynı süreç)
-                                                       │  (consumer)│
-                                                       └─────┬──────┘
-                                                             │
-                                                order.confirmed | order.failed
-                                                             ▼
-                                                          (kuyrukta)
-       GET /orders/:id  ◀──  API hâlâ hafızada tutuyor
-```
+- **Redis adapter** (`src/shared/storage/redis.ts`) behind the same `OrderStore`
+  interface. The API and worker are now separate processes that share state
+  through Redis instead of an in-process Map.
+- **Full topology** (`TOPOLOGY=full`): `order.created` is consumed by the
+  worker; on failure the message is retried (delayed queue) and then dead-lettered
+  to `orders.dlx` → DLQ. Processed orders are fanned out via `order.confirmed` /
+  `order.failed` to a **notification** worker.
+- **Reconnect**: the worker/notification consumers re-register after a broker
+  reconnect (`onMessagingReconnected`).
 
-1. `POST /orders` → sipariş `PENDING`, `order.created` mesajı gönderilir.
-2. **Worker** (aynı süreç) mesajı okur → 1.5s simülasyon → toplam 10.000 TL
-   altı `CONFIRMED`, üstü `FAILED`, `order.confirmed`/`order.failed` yayınlar.
-3. `GET /orders/:id` ile durumu takip ederiz (hafızadaki sipariş güncellenir).
+## Prerequisites
 
-## Başlangıç (5 adım)
+- Node.js 22+
+- Docker + Docker Compose (recommended)
+- Redis (only if running locally without Docker)
+
+## Run with Docker (recommended)
 
 ```bash
-docker compose up -d        # sadece RabbitMQ (5672 + yönetim 15672)
+docker compose up -d --build
+docker compose logs -f api worker notification
+```
+
+This starts `rabbitmq`, `redis`, `api`, `worker`, `notification`.
+
+## Run locally
+
+```bash
+cp .env.example .env          # STORE=redis, REDIS_URL, TOPOLOGY=full
 npm install
-npm run dev                 # tek süreç: Fastify + worker
+# terminal 1 — API
+npm run dev:api
+# terminal 2 — worker
+npm run dev:worker
+# terminal 3 — notification worker
+npm run dev:notification
 ```
 
-> İlk `npm run dev` birkaç saniye RabbitMQ bağlanmaya çalışır.
+When `STORE=in-memory` the three processes each get their own Map, so the flow
+only works correctly with a shared store (redis/postgres). Use `redis` for mid.
 
-### Canlı deneme
+## Try it
 
 ```bash
-# sağlık
-curl http://localhost:3000/health
-
-# sipariş oluştur (toplam 250 → CONFIRMED)
 curl -X POST http://localhost:3000/orders \
-  -H "Content-Type: application/json" \
-  -d '{"customerName":"Ayşe","items":[{"productId":"p-1","name":"Mouse","quantity":1,"unitPrice":250}]}'
+  -H 'Content-Type: application/json' \
+  -d '{"customerName":"Ali","items":[{"productId":"p-1","name":"Klavye","quantity":1,"unitPrice":250}]}'
+# -> 201, status PENDING, eventPublished: true
 
-# siparişi sorgula (PENDING → ~2s sonra CONFIRMED)
-curl http://localhost:3000/orders
+curl http://localhost:3000/orders/:id
+# -> status CONFIRMED after ~1.5s; notification worker logs an email
 ```
 
-## Kavramlar (kısa)
+- `totalAmount > 10000` → `FAILED` (rejected business rule).
+- `GET /health` → `{ "status": "ok", "service": "order-api" }`.
 
-| Kavram | Ne işe yarar |
-|---|---|
-| **Exchange (topic)** | `orders` adında; mesajı *routing key* e göre kuyruğa yönlendirir. |
-| **Queue (`order.processing`)** | Worker'ın okuduğu kuyruk. |
-| **Routing key (`order.created`)** | Mesajın hangi kuyruğa gittiğini belirler. |
-| **ack / nack** | Consumer mesajı işledikten sonra `ack` eder (silinir). Hata olursa `nack(requeue=true)` → tekrar kuyruğa. |
-
-## Geliştirme / Katkı
+## Tests / lint / build
 
 ```bash
-npm test          # Vitest (domain + rota)
+npm test          # vitest (unit + integration, in-memory store)
 npm run lint
 npm run build
 ```
 
-## Seviye ilerleme kılavuzu
+## Roadmap (hero)
 
-| Seviye | Dal | STORE | Topoloji | Servis sayısı |
-|---|---|---|---|---|
-| beginner | `beginner` | in‑memory | basic | 1 (tek süreç) |
-| mid | `mid` | redis | full (DLX/retry/DLQ) | 3 (api+worker+notification) |
-| hero | `main` | postgres | full + outbox | 3 + otel/auth/metrics |
+`git checkout main` adds: Postgres adapter + **transactional outbox**
+(`FOR UPDATE SKIP LOCKED`), consumer **idempotency**, `@fastify/jwt` auth,
+OpenTelemetry tracing and Prometheus metrics, and a real multi-stage production
+Dockerfile.
 
-## Lisans
-
-MIT
+See `.planning/PLAN.md` for the full tier roadmap.

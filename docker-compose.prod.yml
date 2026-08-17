@@ -1,24 +1,21 @@
-# Production overlay (beginner). The app image is the compiled dist/ from
-# the multi-stage Dockerfile — no source bind mounts. STORE=in-memory is
-# overridden to postgres only in the hero tier.
+# Production overlay (mid). İmaj içindeki derlenmiş kaynak kullanılır
+# (kaynak bind mount yok) ve NODE_ENV=production.
+# hero'da gerçek çok aşamalı Dockerfile + postgres (outbox + prisma migrate)
+# eklenir; o zaman bu dosya güncellenir.
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 services:
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: orders-app
-    command: ['node', 'dist/server.js']
+  api:
+    command: ['sh', '-c', 'npm run start:api']
     environment:
       NODE_ENV: production
-      PORT: 3000
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
-      RABBITMQ_EXCHANGE: orders
-      STORE: in-memory
-      TOPOLOGY: basic
-    ports:
-      - '3000:3000'
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    restart: unless-stopped
+    volumes: []
+  worker:
+    command: ['sh', '-c', 'npm run start:worker']
+    environment:
+      NODE_ENV: production
+    volumes: []
+  notification:
+    command: ['sh', '-c', 'npm run start:notification']
+    environment:
+      NODE_ENV: production
+    volumes: []
