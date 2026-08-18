@@ -317,7 +317,9 @@ Done in this version (hero tier):
 
 Next steps (roughly in order):
 
-- [ ] End-to-end tests against a real broker + database
+- [x] **End-to-end tests** — `npm run test:e2e` spins up real Postgres + RabbitMQ
+      via Testcontainers, starts the actual services, and exercises the full
+      confirm / reject / notify order saga
 
 ## Scripts
 
@@ -329,6 +331,7 @@ Next steps (roughly in order):
 | `npm run dev:notification` | Notification worker in watch mode     |
 | `npm run dev:relay`        | Outbox relay in watch mode            |
 | `npm test`                 | Run unit tests                        |
+| `npm run test:e2e`         | End-to-end tests (Testcontainers)     |
 | `npm run lint`             | ESLint                                |
 | `npm run build`            | Compile TypeScript                    |
 | `npm run db:migrate:dev`   | Create/apply migrations (development) |

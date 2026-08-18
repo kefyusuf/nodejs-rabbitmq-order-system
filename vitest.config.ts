@@ -2,6 +2,9 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    // End-to-end tests stand up real infrastructure via Testcontainers and run
+    // in their own config (npm run test:e2e).
+    exclude: ['tests/e2e/**', '**/node_modules/**', '**/dist/**'],
     // The env schema is validated at import time; tests never touch these
     // services, the values only need to satisfy validation.
     env: {
