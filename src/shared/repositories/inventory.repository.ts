@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, type InventoryItem } from '@prisma/client';
 import { prisma } from '../db/prisma';
 import { OrderItem } from '../types/order';
 
@@ -98,5 +98,15 @@ export const inventoryRepository = {
         });
       }
     });
+  },
+
+  /** Read model: current stock levels for all products, ordered by SKU. */
+  async list(): Promise<InventoryItem[]> {
+    return prisma.inventoryItem.findMany({ orderBy: { sku: 'asc' } });
+  },
+
+  /** Read model: a single product's stock level, or null if unknown. */
+  async getBySku(sku: string): Promise<InventoryItem | null> {
+    return prisma.inventoryItem.findUnique({ where: { sku } });
   },
 };

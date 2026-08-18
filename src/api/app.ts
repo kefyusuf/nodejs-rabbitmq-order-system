@@ -1,5 +1,6 @@
 import Fastify, { FastifyHttpOptions } from 'fastify';
 import { orderRoutes } from './routes/orders';
+import { inventoryRoutes } from './routes/inventory';
 import authPlugin from './plugins/auth';
 import {
   httpRequestDurationSeconds,
@@ -52,6 +53,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   });
 
   await app.register(orderRoutes);
+  await app.register(inventoryRoutes);
 
   return app;
 }

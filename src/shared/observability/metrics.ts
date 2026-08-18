@@ -26,6 +26,12 @@ export const orderEventsProcessedTotal = new Counter({
   registers: [registry],
 });
 
+export const inventoryItemsReadTotal = new Counter({
+  name: 'inventory_items_read_total',
+  help: 'Total number of inventory read-model queries served',
+  registers: [registry],
+});
+
 export const httpRequestDurationSeconds = new Histogram({
   name: 'http_request_duration_seconds',
   help: 'HTTP request duration in seconds',

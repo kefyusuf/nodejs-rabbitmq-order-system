@@ -213,6 +213,16 @@ curl http://localhost:8080/orders          # list all
 curl http://localhost:8080/orders/{id}     # single order (404 if unknown)
 ```
 
+### Query inventory (read model)
+
+The API exposes current stock levels as a read model (no auth required, like
+`GET /orders`):
+
+```bash
+curl http://localhost:8080/inventory            # all products (available + reserved)
+curl http://localhost:8080/inventory/prod-1     # single product (404 if unknown)
+```
+
 ## Local development (without full Docker)
 
 Start only the infrastructure, then run the services on your host. Use the
@@ -302,10 +312,11 @@ Done in this version (hero tier):
       Resend when configured
 - [x] **Relay horizontal scaling** — multiple relay replicas via `SKIP LOCKED`,
       documented in [Scaling the relay horizontally](#scaling-the-relay-horizontally)
+- [x] **Inventory read model** — `GET /inventory` and `GET /inventory/:sku`
+      expose current stock levels from the API
 
 Next steps (roughly in order):
 
-- [ ] Add an order `inventory` read model / API endpoint
 - [ ] End-to-end tests against a real broker + database
 
 ## Scripts
