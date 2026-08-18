@@ -17,7 +17,7 @@ async function processMessage(
 
   try {
     const event = JSON.parse(message.content.toString()) as OrderProcessedEvent;
-    handleOrderProcessed(event);
+    await handleOrderProcessed(event);
   } catch (error) {
     // Notifications are best-effort: a malformed event is logged and
     // dropped rather than retried forever.

@@ -16,6 +16,35 @@ const envSchema = z.object({
   // Hero: JWT auth + optional OpenTelemetry export.
   JWT_SECRET: z.string().min(1).default('dev-insecure-change-me'),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),
+  // Hero: real email delivery behind the notification worker.
+  // `console` logs the message without sending (default, dev/demo).
+  // `smtp` sends via a generic SMTP server; `resend` via Resend's SMTP relay.
+  MAIL_MODE: z.enum(['console', 'smtp', 'resend']).default('console'),
+  MAIL_FROM: z.string().default('orders@example.com'),
+  MAIL_TO: z.string().default('customer@example.com'),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().default(587),
+  SMTP_SECURE: z.coerce.boolean().default(false),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
 });
 
-export const env = envSchema.parse(process.env);
+export const env = envSchema
+  .superRefine((value, ctx) => {
+    if (value.MAIL_MODE === 'smtp' && !value.SMTP_HOST) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SMTP_HOST'],
+        message: 'SMTP_HOST is required when MAIL_MODE is "smtp"',
+      });
+    }
+    if (value.MAIL_MODE === 'resend' && !value.RESEND_API_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['RESEND_API_KEY'],
+        message: 'RESEND_API_KEY is required when MAIL_MODE is "resend"',
+      });
+    }
+  })
+  .parse(process.env);

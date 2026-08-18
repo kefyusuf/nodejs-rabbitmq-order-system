@@ -204,6 +204,9 @@ npm run dev:relay           # terminal 5 (outbox -> RabbitMQ)
 
 Set `JWT_SECRET` in `.env` (any non-empty value; the app defaults to
 `dev-insecure-change-me`). For tracing, set `OTEL_EXPORTER_OTLP_ENDPOINT`.
+The notification worker sends email via Nodemailer: `MAIL_MODE` is `console`
+(logs only, default) and can be switched to `smtp` or `resend` with the
+relevant credentials — see `.env.example`.
 
 ## Testing, linting, building
 
@@ -264,10 +267,12 @@ Done in this version (hero tier):
 - [x] Unit tests, lint, CI
 - [x] **Inventory saga** — stock is reserved before an order is confirmed; a
       rejection releases the stock again (choreographed saga + compensation)
+- [x] **Real email delivery** — the notification worker sends through Nodemailer
+      (`console` / `smtp` / `resend` modes), logging by default, real SMTP or
+      Resend when configured
 
 Next steps (roughly in order):
 
-- [ ] Real email provider behind the notification worker
 - [ ] Horizontal scaling docs for the relay (multiple replicas, `SKIP LOCKED`)
 
 ## Scripts

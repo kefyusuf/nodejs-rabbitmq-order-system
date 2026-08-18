@@ -1,28 +1,28 @@
 import { OrderProcessedEvent } from '../../shared/types/order';
+import { env } from '../../shared/config/env';
+import { mailer } from '../../shared/mailer';
 
 /**
- * Simulated customer notification. A real implementation would call an
- * email/SMS provider; for this demo the "email" is logged.
+ * Sends the customer notification email for a processed order. Uses a real
+ * transport (Nodemailer) configured via `MAIL_MODE`; in `console` mode the
+ * message is logged instead of delivered.
  */
-export function handleOrderProcessed(event: OrderProcessedEvent): void {
+export async function handleOrderProcessed(
+  event: OrderProcessedEvent,
+): Promise<void> {
   const subject =
     event.status === 'CONFIRMED'
       ? 'Your order has been confirmed'
       : 'Your order could not be processed';
 
-  const body =
+  const text =
     event.status === 'CONFIRMED'
-      ? 'Good news! We have confirmed your order and will start preparing it shortly.'
-      : 'Unfortunately we could not process your order. No charge will be made.';
+      ? `Good news! We have confirmed your order ${event.orderId} and will start preparing it shortly.`
+      : `Unfortunately we could not process your order ${event.orderId}. No charge will be made.`;
 
-  console.log(
-    [
-      '--- sending notification email ---',
-      `To:      customer of order ${event.orderId}`,
-      `Subject: ${subject}`,
-      `Body:    ${body}`,
-      `Sent at: ${event.processedAt}`,
-      '--------------------------------',
-    ].join('\n'),
-  );
+  await mailer.sendMail({
+    to: env.MAIL_TO,
+    subject,
+    text,
+  });
 }
