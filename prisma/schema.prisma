@@ -46,3 +46,18 @@ model ProcessedMessage {
   queue     String
   createdAt DateTime @default(now())
 }
+
+// Inventory: stock available for reservation. The inventory worker reserves
+// units when an order is placed and releases them on cancellation. Row-level
+// locking (SELECT ... FOR UPDATE) keeps concurrent reservations consistent.
+model InventoryItem {
+  id        String   @id @default(uuid())
+  sku       String   @unique
+  name      String
+  available Int
+  reserved  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("inventory_items")
+}

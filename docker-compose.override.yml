@@ -119,6 +119,24 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  inventory:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: orders-inventory
+    command: ['node', 'dist/inventory-worker/index.js']
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      RABBITMQ_EXCHANGE: orders
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   rabbitmq_data:

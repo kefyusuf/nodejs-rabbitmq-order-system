@@ -2,11 +2,17 @@ import { Channel, ConsumeMessage } from 'amqplib';
 import { createHash } from 'node:crypto';
 import { disconnectPrisma, prisma } from '../shared/db/prisma';
 import { closeMessaging, getChannel } from '../shared/messaging/connection';
-import { CONSUMER_SETTINGS, QUEUES } from '../shared/messaging/constants';
+import { CONSUMER_SETTINGS, QUEUES, ROUTING_KEYS } from '../shared/messaging/constants';
 import { orderEventsProcessedTotal } from '../shared/observability/metrics';
 import { initTracing } from '../shared/observability/tracing';
-import { OrderCreatedEvent } from '../shared/types/order';
-import { handleOrderCreated } from './handlers/order-created.handler';
+import {
+  InventoryReservedEvent,
+  InventoryReservationFailedEvent,
+} from '../shared/types/order';
+import {
+  handleInventoryFailed,
+  handleInventoryReserved,
+} from './handlers/inventory-events.handler';
 
 initTracing('order-worker');
 
@@ -45,8 +51,19 @@ async function processMessage(
   }
 
   try {
-    const event = JSON.parse(message.content.toString()) as OrderCreatedEvent;
-    await handleOrderCreated(event);
+    // The worker reacts to inventory saga events, not order.created directly:
+    // the order is only confirmed after stock has been reserved.
+    if (message.fields.routingKey === ROUTING_KEYS.INVENTORY_RESERVATION_FAILED) {
+      const event = JSON.parse(
+        message.content.toString(),
+      ) as InventoryReservationFailedEvent;
+      await handleInventoryFailed(event);
+    } else {
+      const event = JSON.parse(
+        message.content.toString(),
+      ) as InventoryReservedEvent;
+      await handleInventoryReserved(event);
+    }
     await prisma.processedMessage.create({
       data: { messageId, queue: QUEUES.ORDER_PROCESSING },
     });

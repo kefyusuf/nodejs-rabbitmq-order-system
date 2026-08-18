@@ -54,6 +54,7 @@ export class PostgresOrderStore implements OrderStore {
             orderId: created.id,
             customerName: created.customerName,
             totalAmount: Number(created.totalAmount),
+            items: input.items,
             createdAt: created.createdAt.toISOString(),
           },
         },

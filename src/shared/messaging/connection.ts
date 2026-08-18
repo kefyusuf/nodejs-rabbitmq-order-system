@@ -67,10 +67,33 @@ async function assertTopology(ch: Channel): Promise<void> {
       'x-dead-letter-routing-key': ROUTING_KEYS.ORDER_PROCESSING_DEAD,
     },
   });
+  // The worker now reacts to inventory events (the order is only confirmed
+  // once stock has been reserved by the inventory service).
   await ch.bindQueue(
     QUEUES.ORDER_PROCESSING,
     EXCHANGE_NAME,
+    ROUTING_KEYS.INVENTORY_RESERVED,
+  );
+  await ch.bindQueue(
+    QUEUES.ORDER_PROCESSING,
+    EXCHANGE_NAME,
+    ROUTING_KEYS.INVENTORY_RESERVATION_FAILED,
+  );
+
+  // Inventory service: reserve stock when an order is created.
+  await ch.assertQueue(QUEUES.INVENTORY_RESERVE, { durable: true });
+  await ch.bindQueue(
+    QUEUES.INVENTORY_RESERVE,
+    EXCHANGE_NAME,
     ROUTING_KEYS.ORDER_CREATED,
+  );
+
+  // Inventory service: release previously reserved stock (compensation).
+  await ch.assertQueue(QUEUES.INVENTORY_RELEASE, { durable: true });
+  await ch.bindQueue(
+    QUEUES.INVENTORY_RELEASE,
+    EXCHANGE_NAME,
+    ROUTING_KEYS.INVENTORY_RELEASE,
   );
 
   // Expired retry messages are routed back to the main queue via the

@@ -6,6 +6,9 @@ export const ROUTING_KEYS = {
   ORDER_CONFIRMED: 'order.confirmed',
   ORDER_FAILED: 'order.failed',
   ORDER_PROCESSING_DEAD: 'order.processing.dead',
+  INVENTORY_RESERVED: 'inventory.reserved',
+  INVENTORY_RESERVATION_FAILED: 'inventory.reservation.failed',
+  INVENTORY_RELEASE: 'inventory.release',
 } as const;
 
 export const QUEUES = {
@@ -13,6 +16,8 @@ export const QUEUES = {
   ORDER_PROCESSING_RETRY: 'order.processing.retry',
   ORDER_PROCESSING_DLQ: 'order.processing.dlq',
   ORDER_NOTIFICATIONS: 'order.notifications',
+  INVENTORY_RESERVE: 'inventory.reserve',
+  INVENTORY_RELEASE: 'inventory.release',
 } as const;
 
 export const CONSUMER_SETTINGS = {

@@ -10,35 +10,32 @@ retry, dead-lettering, automatic reconnection, **transactional outbox**,
 ## Architecture
 
 ```
-                         ┌─────────────────────────────────────────────────────┐
-                         │                      RabbitMQ                        │
-  Client                 │                                                     |
-    │   POST /orders     │   exchange: orders (topic)                          │
-    │  (Bearer token)    │     order.created ──▶ order.processing              │
-    ▼                    │                        │          │                  │
-  ┌──────────┐  HTTP     │                        │   retries exhausted         │
-  │ Fastify  │◀──────────┼──▶ PostgreSQL ──▶ Outbox ─┤          │               │
-  │   API    │           │        ▲                │ ▲         ▼          ▼      │
-  │ (JWT +   │           │        │                │ │ orders.dlx  order.processing.dlq
-  │  /metrics│)          │   Outbox Relay  ────────┘ │                            │
-  └──────────┘           │   (polls Outbox,            order.confirmed ──▶┐       │
-                         │    publishes events)       order.failed   ──▶ ├──────┐ │
-                         │                                              ▼      ▼ │ │
-                         │                                    order.notifications│
-                         └────────────────────────────────────────────┼────────┘│
-                                          ▲                             │         │
-                              ┌───────────┴──┐              ┌────────────┴───┐  ┌──┴──────────┐
-                              │  Order Worker │             │ Notification    │  │ (inspect    │
-                              │  (consumer,   │             │ Worker          │  │  DLQ here)  │
-                              │  idempotent)  │             │ sends mail      │  └─────────────┘
-                              │  updates order│             │ (simulated)     │
-                              └───────┬───────┘             └─────────────────┘
-                                      │
-                                      ▼
-                                 PostgreSQL
+                          ┌─────────────────────────────────────────────────────────┐
+                          │                       RabbitMQ                           │
+  Client                  │  exchange: orders (topic)                                │
+    │  POST /orders       │                                                         │
+    │ (Bearer token)      │  order.created ─▶ [inventory.reserve] ─▶ Inventory Worker
+    ▼                     │                                 │  reserves stock         │
+  ┌──────────┐   HTTP     │                                 ├─ inventory.reserved     │
+  │ Fastify  │◀───────────┼──▶ PostgreSQL ─▶ Outbox ─┐     └─ inventory.reservation. │
+  │   API    │            │        ▲               │ │           failed              │
+  │ (JWT +   │            │        │               │ │             │                 │
+  │  /metrics│)           │   Outbox Relay ───────┘ │             ▼                   │
+  └──────────┘            │                         │      [order.processing] ─▶ Order Worker
+                          │                         │             │        │          │
+                          │                      orders.dlx       │   retries          │
+                          │                         │             ▼      ▼            │
+                          │                 order.processing.dlq   order.confirmed / order.failed
+                          │                                         │      │           │
+                          │                                         ▼      ▼           │
+                          │                              order.notifications ─▶ Notification Worker
+                          └──────────────────────────────────────────────────────────┘
 ```
 
 ### The journey of an order
+
+This is a **choreographed saga**: each service reacts to events and emits the
+next one. The order is only `CONFIRMED` after stock has actually been reserved.
 
 1. `POST /orders` — the API validates the payload (zod), calculates the total
    and saves the order as `PENDING` in PostgreSQL **and** inserts an
@@ -48,26 +45,34 @@ retry, dead-lettering, automatic reconnection, **transactional outbox**,
    `order.created` to the `orders` topic exchange, then marks the row
    published. This is the **transactional outbox** pattern: the event is never
    lost even if the broker is down at write time.
-3. The **order worker** consumes the event from `order.processing` (one message
-   at a time via prefetch), simulates processing and applies the business
-   rule: totals above 10,000 are `FAILED`, everything else is `CONFIRMED`. It
-   deduplicates redeliveries via a `processed_messages` table (**idempotent
-   consumer**).
-4. The worker publishes `order.confirmed` or `order.failed`.
-5. The **notification worker** consumes those events and sends a simulated
-   customer email.
-6. Clients poll `GET /orders/{id}` to observe the status transition.
+3. The **inventory worker** consumes `order.created` from `inventory.reserve`,
+   reserves the requested stock (`FOR UPDATE` row locks, idempotent), and
+   publishes `inventory.reserved` or — if anything is out of stock —
+   `inventory.reservation.failed`.
+4. The **order worker** consumes the inventory outcome from `order.processing`
+   (one message at a time via prefetch). On `inventory.reserved` it simulates
+   processing and applies the business rule: totals above 10,000 are `FAILED`,
+   everything else is `CONFIRMED`. It deduplicates redeliveries via a
+   `processed_messages` table (**idempotent consumer**).
+5. The worker publishes `order.confirmed` or `order.failed`. If the business
+   rule rejects an order whose stock was already reserved, it first publishes
+   `inventory.release` so the inventory worker returns the stock
+   (saga compensation).
+6. The **notification worker** consumes `order.confirmed`/`order.failed` and
+   sends a simulated customer email.
+7. Clients poll `GET /orders/{id}` to observe the status transition.
 
 ### Services
 
-| Service          | Port           | Description                                       |
-| ---------------- | -------------- | ------------------------------------------------- |
-| **api**          | 3000 (8080 dev)| Fastify REST API — create/query orders, JWT, metrics |
-| **worker**       | —              | Consumer — process orders, update status (idempotent) |
-| **notification** | —              | Consumer — react to processed orders              |
-| **relay**        | —              | Outbox → RabbitMQ publisher                       |
-| **postgres**     | 5432 (5433 dev)| Order database + Outbox (Prisma)                  |
-| **rabbitmq**     | 5672 / 15672   | Message broker + Management UI (guest/guest)      |
+| Service          | Port           | Description                                           |
+| ---------------- | -------------- | ----------------------------------------------------- |
+| **api**          | 3000 (8080 dev)| Fastify REST API — create/query orders, JWT, metrics   |
+| **worker**       | —              | Consumer — react to inventory events, update status    |
+| **inventory**    | —              | Consumer — reserve/release stock (saga step)           |
+| **notification** | —              | Consumer — react to processed orders                   |
+| **relay**        | —              | Outbox → RabbitMQ publisher                           |
+| **postgres**     | 5432 (5433 dev)| Order database + Outbox + Inventory (Prisma)          |
+| **rabbitmq**     | 5672 / 15672   | Message broker + Management UI (guest/guest)          |
 
 > **Standard ports.** The canonical ports are **API 3000**, **RabbitMQ 5672**
 > (AMQP) / **15672** (Management UI) and **PostgreSQL 5432** (also common:
@@ -83,7 +88,9 @@ retry, dead-lettering, automatic reconnection, **transactional outbox**,
 | ------------------------ | ---------------------------------------- | -------------------------------------- |
 | `orders`                 | topic exchange, durable                  | All order lifecycle events             |
 | `orders.dlx`             | direct exchange, durable                 | Dead letter exchange                   |
-| `order.processing`       | queue, dead-letters to `orders.dlx`      | Main processing queue                  |
+| `inventory.reserve`      | queue bound to `order.created`           | Triggers stock reservation             |
+| `inventory.release`      | queue bound to `inventory.release`       | Releases stock (compensation)          |
+| `order.processing`       | queue, dead-letters to `orders.dlx`      | Main processing queue (inventory outcome) |
 | `order.processing.retry` | queue, TTL 5s, dead-letters back to main | Delayed redelivery for failed messages |
 | `order.processing.dlq`   | queue bound to `orders.dlx`              | Messages that exhausted 3 retries      |
 | `order.notifications`    | queue bound to `order.confirmed/failed`  | Notifications fan-out                  |
@@ -112,7 +119,7 @@ retry, dead-lettering, automatic reconnection, **transactional outbox**,
 
 ```bash
 docker compose up -d --build        # base + docker-compose.override.yml (dev ports)
-docker compose logs -f api worker notification relay
+docker compose logs -f api worker inventory notification relay
 ```
 
 - API: http://localhost:8080  (standard port is 3000 — see above)
@@ -189,9 +196,10 @@ npx prisma generate
 npx prisma migrate dev
 
 npm run dev:api             # terminal 1
-npm run dev:worker          # terminal 2
-npm run dev:notification    # terminal 3
-npm run dev:relay           # terminal 4 (outbox -> RabbitMQ)
+npm run dev:inventory       # terminal 2
+npm run dev:worker          # terminal 3
+npm run dev:notification    # terminal 4
+npm run dev:relay           # terminal 5 (outbox -> RabbitMQ)
 ```
 
 Set `JWT_SECRET` in `.env` (any non-empty value; the app defaults to
@@ -222,7 +230,8 @@ non-local deployment.
 ```
 src/
 ├── api/                  # Fastify REST API (app, entrypoint, routes, auth plugin)
-├── worker/               # Order processing consumer (idempotent)
+├── worker/               # Order processing consumer (idempotent, reacts to inventory events)
+├── inventory-worker/     # Inventory consumer (reserve/release stock — saga step)
 ├── notification-worker/  # Notification consumer
 ├── outbox-relay/         # Polls Outbox, publishes to RabbitMQ
 ├── types/                # fastify module augmentation
@@ -253,10 +262,11 @@ Done in this version (hero tier):
 - [x] **OpenTelemetry** tracing (opt-in via `OTEL_EXPORTER_OTLP_ENDPOINT`)
 - [x] **Prometheus** metrics (`/metrics`)
 - [x] Unit tests, lint, CI
+- [x] **Inventory saga** — stock is reserved before an order is confirmed; a
+      rejection releases the stock again (choreographed saga + compensation)
 
 Next steps (roughly in order):
 
-- [ ] Inventory service reserving stock on `order.created`
 - [ ] Real email provider behind the notification worker
 - [ ] Horizontal scaling docs for the relay (multiple replicas, `SKIP LOCKED`)
 
@@ -265,6 +275,7 @@ Next steps (roughly in order):
 | Script                     | Description                           |
 | -------------------------- | ------------------------------------- |
 | `npm run dev:api`          | API in watch mode                     |
+| `npm run dev:inventory`    | Inventory worker in watch mode        |
 | `npm run dev:worker`       | Order worker in watch mode            |
 | `npm run dev:notification` | Notification worker in watch mode     |
 | `npm run dev:relay`        | Outbox relay in watch mode            |

@@ -21,6 +21,7 @@ export interface OrderCreatedEvent {
   orderId: string;
   customerName: string;
   totalAmount: number;
+  items: OrderItem[];
   createdAt: string;
 }
 
@@ -28,4 +29,26 @@ export interface OrderProcessedEvent {
   orderId: string;
   status: 'CONFIRMED' | 'FAILED';
   processedAt: string;
+}
+
+// Inventory saga events (choreography):
+//  - inventory.reserved: all line items reserved successfully
+//  - inventory.reservation.failed: at least one line item was out of stock
+//  - inventory.release: release previously reserved stock (compensation)
+export interface InventoryReservedEvent {
+  orderId: string;
+  customerName: string;
+  totalAmount: number;
+  items: OrderItem[];
+}
+
+export interface InventoryReservationFailedEvent {
+  orderId: string;
+  reason: string;
+  items: OrderItem[];
+}
+
+export interface InventoryReleaseEvent {
+  orderId: string;
+  items: OrderItem[];
 }
