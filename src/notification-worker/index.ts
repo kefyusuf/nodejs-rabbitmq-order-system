@@ -2,9 +2,11 @@ import { Channel, ConsumeMessage } from 'amqplib';
 import { closeMessaging, getChannel } from '../shared/messaging/connection';
 import { CONSUMER_SETTINGS, QUEUES } from '../shared/messaging/constants';
 import { initTracing } from '../shared/observability/tracing';
+import { registerFaultHandlers } from '../shared/process/process';
 import { OrderProcessedEvent } from '../shared/types/order';
 import { handleOrderProcessed } from './handlers/order-processed.handler';
 
+registerFaultHandlers();
 initTracing('order-notification');
 
 async function processMessage(

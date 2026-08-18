@@ -3,7 +3,9 @@ import { orderEventsPublishedTotal } from '../shared/observability/metrics';
 import { prisma } from '../shared/db/prisma';
 import { publishMessage } from '../shared/messaging/publisher';
 import { initTracing } from '../shared/observability/tracing';
+import { registerFaultHandlers } from '../shared/process/process';
 
+registerFaultHandlers();
 initTracing('order-outbox-relay');
 
 const POLL_INTERVAL_MS = 1000;

@@ -32,6 +32,17 @@ const envSchema = z.object({
 
 export const env = envSchema
   .superRefine((value, ctx) => {
+    if (
+      value.NODE_ENV === 'production' &&
+      value.JWT_SECRET === 'dev-insecure-change-me'
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['JWT_SECRET'],
+        message:
+          'JWT_SECRET must be set to a strong value when NODE_ENV is "production"',
+      });
+    }
     if (value.MAIL_MODE === 'smtp' && !value.SMTP_HOST) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

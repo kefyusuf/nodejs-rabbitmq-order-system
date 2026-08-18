@@ -18,7 +18,11 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/package.json ./package.json
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod +x /entrypoint.sh \
+  && addgroup -S nodejs \
+  && adduser -S nodejs -G nodejs \
+  && chown -R nodejs:nodejs /app /entrypoint.sh
 
+USER nodejs
 EXPOSE 3000
 ENTRYPOINT ["/entrypoint.sh"]

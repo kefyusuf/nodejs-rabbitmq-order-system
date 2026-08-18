@@ -5,6 +5,7 @@ import { closeMessaging, getChannel } from '../shared/messaging/connection';
 import { CONSUMER_SETTINGS, QUEUES, ROUTING_KEYS } from '../shared/messaging/constants';
 import { orderEventsProcessedTotal } from '../shared/observability/metrics';
 import { initTracing } from '../shared/observability/tracing';
+import { registerFaultHandlers } from '../shared/process/process';
 import {
   InventoryReservedEvent,
   InventoryReservationFailedEvent,
@@ -14,6 +15,7 @@ import {
   handleInventoryReserved,
 } from './handlers/inventory-events.handler';
 
+registerFaultHandlers();
 initTracing('order-worker');
 
 const RETRY_HEADER = 'x-retry-count';

@@ -4,6 +4,7 @@ import { disconnectPrisma, prisma } from '../shared/db/prisma';
 import { closeMessaging, getChannel } from '../shared/messaging/connection';
 import { CONSUMER_SETTINGS, QUEUES } from '../shared/messaging/constants';
 import { initTracing } from '../shared/observability/tracing';
+import { registerFaultHandlers } from '../shared/process/process';
 import { inventoryRepository } from '../shared/repositories/inventory.repository';
 import {
   InventoryReleaseEvent,
@@ -11,6 +12,7 @@ import {
 } from '../shared/types/order';
 import { handleOrderCreated, handleRelease } from './handlers/inventory.handler';
 
+registerFaultHandlers();
 initTracing('inventory-worker');
 
 function getMessageId(message: ConsumeMessage): string {
