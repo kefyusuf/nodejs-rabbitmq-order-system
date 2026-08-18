@@ -1,4 +1,4 @@
-# Preserve LF line endings for shell scripts; Alpine/Linux cannot run
-# CRLF-terminated shebang scripts (breaks the Docker entrypoint).
+# Normalize all text files to LF on commit (Windows CRLF caused the
+# docker entrypoint shebang to break, so force LF for shell scripts and source).
+* text=auto eol=lf
 *.sh text eol=lf
-docker/entrypoint.sh eol=lf

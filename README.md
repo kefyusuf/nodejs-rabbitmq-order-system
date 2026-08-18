@@ -113,6 +113,36 @@ next one. The order is only `CONFIRMED` after stock has actually been reserved.
 - **Observability:** Prometheus metrics are exposed at `GET /metrics`; optional
   OpenTelemetry tracing activates when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 
+## Scaling the relay horizontally
+
+The outbox relay is the only component that publishes to RabbitMQ, and it is
+designed to run as **multiple replicas** safely:
+
+- Each poll runs `SELECT ... FROM "Outbox" WHERE published = false ... FOR UPDATE
+  SKIP LOCKED` inside a single transaction. `SKIP LOCKED` lets concurrent
+  replicas each claim a **disjoint** batch of rows, so no two replicas ever
+  publish the same event.
+- An event is marked `published = true` in the **same transaction** that
+  publishes it. If a replica dies after publishing but before committing, the
+  row stays unpublished and is retried — delivery is **at-least-once**.
+- Downstream consumers are **idempotent** (they dedupe on `messageId` via the
+  `processed_messages` table), so the occasional duplicate from a retry is
+  absorbed without side effects.
+
+Run more than one relay with Compose:
+
+```bash
+docker compose up -d --scale relay=3
+```
+
+In a Swarm / orchestrator deployment, set a replica count on the `relay`
+service (`deploy.replicas`, shown in `docker-compose.prod.yml`).
+
+Tuning knobs: the poll interval and the `LIMIT` in the relay query (batch size
+per poll), plus `prefetch` on the consumers. Because claim + publish + mark are
+atomic per batch, raising the replica count increases throughput linearly
+without risking double-publishes.
+
 ## Quick start (Docker)
 
 ### Local development (shifted ports, no conflicts)
@@ -270,10 +300,13 @@ Done in this version (hero tier):
 - [x] **Real email delivery** — the notification worker sends through Nodemailer
       (`console` / `smtp` / `resend` modes), logging by default, real SMTP or
       Resend when configured
+- [x] **Relay horizontal scaling** — multiple relay replicas via `SKIP LOCKED`,
+      documented in [Scaling the relay horizontally](#scaling-the-relay-horizontally)
 
 Next steps (roughly in order):
 
-- [ ] Horizontal scaling docs for the relay (multiple replicas, `SKIP LOCKED`)
+- [ ] Add an order `inventory` read model / API endpoint
+- [ ] End-to-end tests against a real broker + database
 
 ## Scripts
 

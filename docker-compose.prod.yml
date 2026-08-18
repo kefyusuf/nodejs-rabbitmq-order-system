@@ -78,6 +78,10 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    # Run multiple replicas for throughput: `docker compose up -d --scale relay=N`,
+    # or set a replica count here for Swarm / orchestrator deployments.
+    deploy:
+      replicas: 2
     restart: unless-stopped
 
   inventory:
