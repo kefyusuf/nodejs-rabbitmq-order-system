@@ -16,6 +16,9 @@ const envSchema = z.object({
   // Hero: JWT auth + optional OpenTelemetry export.
   JWT_SECRET: z.string().min(1).default('dev-insecure-change-me'),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),
+  // Optional, comma-separated allow-list for browser (CORS) clients. When unset
+  // no origins are allowed (API-only).
+  CORS_ORIGIN: z.string().optional(),
   // Hero: real email delivery behind the notification worker.
   // `console` logs the message without sending (default, dev/demo).
   // `smtp` sends via a generic SMTP server; `resend` via Resend's SMTP relay.

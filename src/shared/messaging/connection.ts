@@ -1,5 +1,6 @@
 import amqp, { Channel, ChannelModel } from 'amqplib';
 import { env } from '../config/env';
+import { logger } from '../observability/logger';
 import {
   CONSUMER_SETTINGS,
   DEAD_LETTER_EXCHANGE_NAME,
@@ -35,10 +36,10 @@ async function establishChannel(): Promise<Channel> {
   const conn = await amqp.connect(env.RABBITMQ_URL, { recovery: true });
 
   conn.on('error', (error: Error) => {
-    console.error('RabbitMQ connection error:', error.message);
+    logger.error({ err: error }, 'RabbitMQ connection error');
   });
   conn.on('close', () => {
-    console.warn('RabbitMQ connection closed — amqplib will auto-recover');
+    logger.warn('RabbitMQ connection closed — amqplib will auto-recover');
     channel = null;
     connection = null;
   });
@@ -48,7 +49,7 @@ async function establishChannel(): Promise<Channel> {
 
   connection = conn;
   channel = ch;
-  console.log('Connected to RabbitMQ');
+  logger.info('Connected to RabbitMQ');
 
   return ch;
 }
@@ -137,7 +138,13 @@ export async function closeMessaging(): Promise<void> {
     try {
       await conn.close();
     } catch (error) {
-      console.error('Error while closing RabbitMQ connection:', error);
+      logger.error({ err: error }, 'Error while closing RabbitMQ connection');
     }
   }
+}
+
+// Liveness/readiness signal: true once the channel has been asserted and is
+// still open. Lets the API report whether it can actually reach the broker.
+export function isMessagingConnected(): boolean {
+  return channel !== null && !(channel as unknown as { closed: boolean }).closed;
 }

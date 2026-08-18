@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { disconnectPrisma, prisma } from '../shared/db/prisma';
 import { closeMessaging, getChannel } from '../shared/messaging/connection';
 import { CONSUMER_SETTINGS, QUEUES } from '../shared/messaging/constants';
+import { logger } from '../shared/observability/logger';
 import { initTracing } from '../shared/observability/tracing';
 import { registerFaultHandlers } from '../shared/process/process';
 import { inventoryRepository } from '../shared/repositories/inventory.repository';
@@ -51,7 +52,7 @@ async function processReserve(
     await handleOrderCreated(event);
     channel.ack(message);
   } catch (error) {
-    console.error('Failed to reserve stock:', error);
+    logger.error({ err: error }, 'Failed to reserve stock');
     // Inventory reservation is not retried here; failure is communicated via
     // the inventory.reservation.failed event published inside the handler.
     channel.ack(message);
@@ -75,7 +76,7 @@ async function processRelease(
     await handleRelease(event);
     channel.ack(message);
   } catch (error) {
-    console.error('Failed to release stock:', error);
+    logger.error({ err: error }, 'Failed to release stock');
     channel.ack(message);
   }
 }
@@ -91,13 +92,13 @@ async function startConsuming(): Promise<void> {
     void processRelease(channel, message);
   });
 
-  console.log(
+  logger.info(
     `Inventory worker listening on queues: ${QUEUES.INVENTORY_RESERVE}, ${QUEUES.INVENTORY_RELEASE}`,
   );
 }
 
 async function shutdown(signal: string): Promise<void> {
-  console.log(`Received ${signal}, shutting down gracefully...`);
+  logger.info(`Received ${signal}, shutting down gracefully...`);
   await closeMessaging();
   await disconnectPrisma();
   process.exit(0);
@@ -110,6 +111,6 @@ inventoryRepository
   .ensureSeeded()
   .then(() => startConsuming())
   .catch((error) => {
-    console.error('Failed to start inventory worker:', error);
+    logger.error({ err: error }, 'Failed to start inventory worker');
     process.exit(1);
   });

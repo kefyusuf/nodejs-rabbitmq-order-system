@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import { disconnectPrisma, prisma } from '../shared/db/prisma';
 import { closeMessaging, getChannel } from '../shared/messaging/connection';
 import { CONSUMER_SETTINGS, QUEUES, ROUTING_KEYS } from '../shared/messaging/constants';
-import { orderEventsProcessedTotal } from '../shared/observability/metrics';
+import { orderEventsDeadLetteredTotal, orderEventsProcessedTotal } from '../shared/observability/metrics';
+import { logger } from '../shared/observability/logger';
 import { initTracing } from '../shared/observability/tracing';
 import { registerFaultHandlers } from '../shared/process/process';
 import {
@@ -85,13 +86,14 @@ async function processMessage(
         headers: { [RETRY_HEADER]: retryCount + 1 },
       });
       channel.ack(message);
-      console.warn(
-        `Message scheduled for retry in ${CONSUMER_SETTINGS.RETRY_DELAY_MS}ms`,
+      logger.warn(
+        `Message scheduled for retry in ${CONSUMER_SETTINGS.RETRY_DELAY_MS}ms (attempt ${retryCount + 1}/${CONSUMER_SETTINGS.MAX_RETRIES})`,
       );
     } else {
       // Requeue=false dead-letters the message to orders.dlx -> DLQ.
       channel.nack(message, false, false);
-      console.error(
+      orderEventsDeadLetteredTotal.inc();
+      logger.error(
         `Message moved to dead letter queue: ${QUEUES.ORDER_PROCESSING_DLQ}`,
       );
     }
@@ -106,13 +108,13 @@ async function startConsuming(): Promise<void> {
     void processMessage(channel, message);
   });
 
-  console.log(
+  logger.info(
     `Worker listening on queue: ${QUEUES.ORDER_PROCESSING} (prefetch: ${CONSUMER_SETTINGS.PREFETCH_COUNT})`,
   );
 }
 
 async function shutdown(signal: string): Promise<void> {
-  console.log(`Received ${signal}, shutting down gracefully...`);
+  logger.info(`Received ${signal}, shutting down gracefully...`);
   await closeMessaging();
   await disconnectPrisma();
   process.exit(0);
@@ -122,6 +124,6 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 startConsuming().catch((error) => {
-  console.error('Failed to start worker:', error);
+  logger.error({ err: error }, 'Failed to start worker');
   process.exit(1);
 });

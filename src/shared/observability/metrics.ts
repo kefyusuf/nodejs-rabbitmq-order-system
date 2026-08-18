@@ -26,6 +26,12 @@ export const orderEventsProcessedTotal = new Counter({
   registers: [registry],
 });
 
+export const orderEventsDeadLetteredTotal = new Counter({
+  name: 'order_events_dead_lettered_total',
+  help: 'Total number of order events moved to the dead letter queue after max retries',
+  registers: [registry],
+});
+
 export const inventoryItemsReadTotal = new Counter({
   name: 'inventory_items_read_total',
   help: 'Total number of inventory read-model queries served',

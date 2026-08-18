@@ -1,6 +1,7 @@
 import { env } from '../shared/config/env';
 import { disconnectPrisma } from '../shared/db/prisma';
 import { closeMessaging } from '../shared/messaging/connection';
+import { logger } from '../shared/observability/logger';
 import { registerFaultHandlers } from '../shared/process/process';
 import { buildApp } from './app';
 
@@ -12,11 +13,11 @@ async function main(): Promise<void> {
   app = await buildApp();
 
   await app.listen({ port: env.PORT, host: '0.0.0.0' });
-  app.log.info(`Order API listening on port ${env.PORT}`);
+  logger.info(`Order API listening on port ${env.PORT}`);
 }
 
 async function shutdown(signal: string): Promise<void> {
-  console.log(`Received ${signal}, shutting down gracefully...`);
+  logger.info(`Received ${signal}, shutting down gracefully...`);
   await closeMessaging();
   await disconnectPrisma();
   // Drain in-flight HTTP requests before exiting.
@@ -28,6 +29,6 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 main().catch((error) => {
-  console.error('Failed to start API:', error);
+  logger.error({ err: error }, 'Failed to start API');
   process.exit(1);
 });

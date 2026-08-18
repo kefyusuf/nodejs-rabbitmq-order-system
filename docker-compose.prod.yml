@@ -12,7 +12,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
+      DATABASE_URL: postgresql://orders_app:orders_app@postgres:5432/orders?schema=public
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       RABBITMQ_EXCHANGE: orders
       # Change this before any non-local deployment.
@@ -41,7 +41,7 @@ services:
     command: ['node', 'dist/worker/index.js']
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
+      DATABASE_URL: postgresql://orders_app:orders_app@postgres:5432/orders?schema=public
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       RABBITMQ_EXCHANGE: orders
     depends_on:
@@ -59,7 +59,7 @@ services:
     command: ['node', 'dist/notification-worker/index.js']
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
+      DATABASE_URL: postgresql://orders_app:orders_app@postgres:5432/orders?schema=public
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       RABBITMQ_EXCHANGE: orders
     depends_on:
@@ -75,7 +75,7 @@ services:
     command: ['node', 'dist/outbox-relay/index.js']
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
+      DATABASE_URL: postgresql://orders_app:orders_app@postgres:5432/orders?schema=public
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       RABBITMQ_EXCHANGE: orders
     depends_on:
@@ -97,7 +97,7 @@ services:
     command: ['node', 'dist/inventory-worker/index.js']
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
+      DATABASE_URL: postgresql://orders_app:orders_app@postgres:5432/orders?schema=public
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       RABBITMQ_EXCHANGE: orders
     depends_on:

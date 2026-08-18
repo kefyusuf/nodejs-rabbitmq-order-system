@@ -13,10 +13,13 @@ RUN npm run build
 
 FROM base AS runner
 ENV NODE_ENV=production
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/dist ./dist
+COPY package.json package-lock.json* ./
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/package.json ./package.json
+# Install only production dependencies (prisma is a runtime dep so migrations
+# still work via the entrypoint). This keeps dev tooling out of the image.
+RUN npm ci --omit=dev \
+  && npx prisma generate
+COPY --from=builder /app/dist ./dist
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh \
   && addgroup -S nodejs \

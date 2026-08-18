@@ -1,8 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
 import { spawn, type ChildProcess, execSync } from 'node:child_process';
+import { resolve } from 'node:path';
 
 const ROOT = process.cwd();
+// Invoke tsx in-process (no shell, no npx wrapper) so each service is a single
+// PID that we can terminate cleanly — avoids orphaned processes holding ports.
+const TSX_CLI = resolve(ROOT, 'node_modules/tsx/dist/cli.mjs');
 
 let pg: StartedTestContainer;
 let rabbit: StartedTestContainer;
@@ -13,11 +17,10 @@ const API_PORT = '8080';
 const API_URL = `http://localhost:${API_PORT}`;
 
 function spawnService(file: string, captureNotification = false): ChildProcess {
-  const child = spawn('npx', ['tsx', file], {
+  const child = spawn(process.execPath, [TSX_CLI, resolve(ROOT, file)], {
     cwd: ROOT,
     env: { ...process.env, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
-    shell: true,
   });
   const sink = captureNotification
     ? (d: Buffer) => (notificationLog += d.toString())

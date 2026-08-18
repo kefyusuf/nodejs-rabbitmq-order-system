@@ -1,5 +1,6 @@
 import { closeMessaging, getChannel } from '../shared/messaging/connection';
 import { orderEventsPublishedTotal } from '../shared/observability/metrics';
+import { logger } from '../shared/observability/logger';
 import { prisma } from '../shared/db/prisma';
 import { publishMessage } from '../shared/messaging/publisher';
 import { initTracing } from '../shared/observability/tracing';
@@ -37,7 +38,7 @@ async function publishPending(): Promise<void> {
 
   if (rows.length > 0) {
     orderEventsPublishedTotal.inc(rows.length);
-    console.log(`Outbox relay published ${rows.length} event(s)`);
+    logger.info(`Outbox relay published ${rows.length} event(s)`);
   }
 }
 
@@ -48,13 +49,13 @@ async function main(): Promise<void> {
   console.log('Outbox relay started');
   timer = setInterval(() => {
     void publishPending().catch((error) =>
-      console.error('Outbox relay error:', error),
+      logger.error({ err: error }, 'Outbox relay error'),
     );
   }, POLL_INTERVAL_MS);
 }
 
 async function shutdown(signal: string): Promise<void> {
-  console.log(`Received ${signal}, shutting down gracefully...`);
+  logger.info(`Received ${signal}, shutting down gracefully...`);
   if (timer) clearInterval(timer);
   await closeMessaging();
   process.exit(0);
@@ -64,6 +65,6 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 main().catch((error) => {
-  console.error('Failed to start outbox relay:', error);
+  logger.error({ err: error }, 'Failed to start outbox relay');
   process.exit(1);
 });

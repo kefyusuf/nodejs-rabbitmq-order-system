@@ -1,6 +1,7 @@
 import { Channel, ConsumeMessage } from 'amqplib';
 import { closeMessaging, getChannel } from '../shared/messaging/connection';
 import { CONSUMER_SETTINGS, QUEUES } from '../shared/messaging/constants';
+import { logger } from '../shared/observability/logger';
 import { initTracing } from '../shared/observability/tracing';
 import { registerFaultHandlers } from '../shared/process/process';
 import { OrderProcessedEvent } from '../shared/types/order';
@@ -23,7 +24,7 @@ async function processMessage(
   } catch (error) {
     // Notifications are best-effort: a malformed event is logged and
     // dropped rather than retried forever.
-    console.error('Dropping unprocessable notification event:', error);
+    logger.error({ err: error }, 'Dropping unprocessable notification event');
   } finally {
     channel.ack(message);
   }
@@ -37,13 +38,13 @@ async function startConsuming(): Promise<void> {
     void processMessage(channel, message);
   });
 
-  console.log(
+  logger.info(
     `Notification worker listening on queue: ${QUEUES.ORDER_NOTIFICATIONS}`,
   );
 }
 
 async function shutdown(signal: string): Promise<void> {
-  console.log(`Received ${signal}, shutting down gracefully...`);
+  logger.info(`Received ${signal}, shutting down gracefully...`);
   await closeMessaging();
   process.exit(0);
 }
@@ -52,6 +53,6 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 startConsuming().catch((error) => {
-  console.error('Failed to start notification worker:', error);
+  logger.error({ err: error }, 'Failed to start notification worker');
   process.exit(1);
 });
