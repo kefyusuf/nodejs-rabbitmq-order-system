@@ -292,35 +292,6 @@ prisma/                   # Schema and migrations
 docker/                   # Entrypoint scripts
 ```
 
-## Roadmap
-
-Done in this version (hero tier):
-
-- [x] Event-driven core: API → relay → worker → notification
-- [x] Retry queue + dead letter queue + DLX
-- [x] Consumer prefetch and automatic reconnection (`recovery: true`)
-- [x] **Transactional outbox** — `order.created` is never lost when the broker is down
-- [x] **Idempotent consumers** — dedupe on `messageId`
-- [x] **JWT authentication** on the API (`/auth/token` issuer + `authenticate` decorator)
-- [x] **OpenTelemetry** tracing (opt-in via `OTEL_EXPORTER_OTLP_ENDPOINT`)
-- [x] **Prometheus** metrics (`/metrics`)
-- [x] Unit tests, lint, CI
-- [x] **Inventory saga** — stock is reserved before an order is confirmed; a
-      rejection releases the stock again (choreographed saga + compensation)
-- [x] **Real email delivery** — the notification worker sends through Nodemailer
-      (`console` / `smtp` / `resend` modes), logging by default, real SMTP or
-      Resend when configured
-- [x] **Relay horizontal scaling** — multiple relay replicas via `SKIP LOCKED`,
-      documented in [Scaling the relay horizontally](#scaling-the-relay-horizontally)
-- [x] **Inventory read model** — `GET /inventory` and `GET /inventory/:sku`
-      expose current stock levels from the API
-
-Next steps (roughly in order):
-
-- [x] **End-to-end tests** — `npm run test:e2e` spins up real Postgres + RabbitMQ
-      via Testcontainers, starts the actual services, and exercises the full
-      confirm / reject / notify order saga
-
 ## Scripts
 
 | Script                     | Description                           |
