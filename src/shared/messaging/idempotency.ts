@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { ConsumeMessage } from 'amqplib';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../../generated/prisma/client';
 import { prisma } from '../db/prisma';
 
 export function getMessageId(message: ConsumeMessage): string {

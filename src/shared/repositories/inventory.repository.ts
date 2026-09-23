@@ -1,4 +1,4 @@
-import { Prisma, type InventoryItem } from '@prisma/client';
+import { Prisma, type InventoryItem } from '../../generated/prisma/client';
 import { prisma } from '../db/prisma';
 import { OrderItem } from '../types/order';
 

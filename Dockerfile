@@ -15,6 +15,7 @@ FROM base AS runner
 ENV NODE_ENV=production
 COPY package.json package-lock.json* ./
 COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 # Install only production dependencies (prisma is a runtime dep so migrations
 # still work via the entrypoint). This keeps dev tooling out of the image.
 RUN npm ci --omit=dev \

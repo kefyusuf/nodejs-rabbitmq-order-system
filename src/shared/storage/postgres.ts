@@ -1,5 +1,7 @@
-import { Prisma } from '@prisma/client';
-import { OrderStatus as PrismaOrderStatus } from '@prisma/client';
+import {
+  Prisma,
+  OrderStatus as PrismaOrderStatus,
+} from '../../generated/prisma/client';
 import { calculateOrderTotal } from '../domain/order';
 import { prisma } from '../db/prisma';
 import { ROUTING_KEYS } from '../messaging/constants';

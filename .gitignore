@@ -6,3 +6,4 @@ dist/
 .mimosa/
 .zcode/
 .planning/
+src/generated/
