@@ -2,11 +2,11 @@ import { orderStore } from '../storage';
 import type { OrderRecord, OrderStore } from '../storage/OrderStore';
 
 /**
- * Depolama artık `OrderStore` adapter aracılığıyla yapılır; bu dosya
- * geriye dönük uyumluluk için `orderRepository` ismini korur.
+ * Persistence goes through the `OrderStore` adapter; this module keeps the
+ * `orderRepository` name for backwards compatibility.
  *
- * Hangi adapterin aktif olduğu `STORE` env değerinden gelir
- * (in‑memory | redis | postgres).
+ * The active adapter is selected by the `STORE` env value
+ * (in-memory | redis | postgres).
  */
 export const orderRepository: OrderStore = orderStore;
 

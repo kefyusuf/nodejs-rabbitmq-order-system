@@ -56,7 +56,8 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orders?schema=public
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       RABBITMQ_EXCHANGE: orders
-      JWT_SECRET: dev-insecure-change-me
+      # Local-only secret (must not be the env default when NODE_ENV=production).
+      JWT_SECRET: local-compose-only-jwt-secret
       # OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     ports:
       - '8080:3000'

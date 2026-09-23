@@ -32,7 +32,10 @@ describe('inventory routes', () => {
 
   it('GET /inventory returns all items', async () => {
     const app = await buildApp({ logger: false });
-    mockedList.mockResolvedValue([buildItem('prod-1', 98, 2), buildItem('prod-2', 10, 0)]);
+    mockedList.mockResolvedValue([
+      buildItem('prod-1', 98, 2),
+      buildItem('prod-2', 10, 0),
+    ]);
 
     const response = await app.inject({ method: 'GET', url: '/inventory' });
 
@@ -46,7 +49,10 @@ describe('inventory routes', () => {
     const app = await buildApp({ logger: false });
     mockedGetBySku.mockResolvedValue(null);
 
-    const response = await app.inject({ method: 'GET', url: '/inventory/nope' });
+    const response = await app.inject({
+      method: 'GET',
+      url: '/inventory/nope',
+    });
 
     expect(response.statusCode).toBe(404);
     await app.close();
@@ -56,7 +62,10 @@ describe('inventory routes', () => {
     const app = await buildApp({ logger: false });
     mockedGetBySku.mockResolvedValue(buildItem('prod-1', 98, 2));
 
-    const response = await app.inject({ method: 'GET', url: '/inventory/prod-1' });
+    const response = await app.inject({
+      method: 'GET',
+      url: '/inventory/prod-1',
+    });
 
     expect(response.statusCode).toBe(200);
     expect(response.json().available).toBe(98);

@@ -15,6 +15,13 @@ export class InsufficientStockError extends Error {
   }
 }
 
+export class UnknownSkuError extends Error {
+  constructor(public readonly sku: string) {
+    super(`Unknown SKU: ${sku}`);
+    this.name = 'UnknownSkuError';
+  }
+}
+
 interface Line {
   sku: string;
   quantity: number;
@@ -27,7 +34,10 @@ const SEED_PRODUCTS = [
 ];
 
 function toLines(items: OrderItem[]): Line[] {
-  return items.map((item) => ({ sku: item.productId, quantity: item.quantity }));
+  return items.map((item) => ({
+    sku: item.productId,
+    quantity: item.quantity,
+  }));
 }
 
 export const inventoryRepository = {
@@ -46,15 +56,28 @@ export const inventoryRepository = {
 
   /**
    * Reserve stock for every line in one transaction, locking the affected rows
-   * (FOR UPDATE) so concurrent orders can't oversell. Throws
-   * InsufficientStockError (rolling back) if any line is unavailable.
+   * (FOR UPDATE) so concurrent orders can't oversell. Idempotent per `orderId`:
+   * a retry after a partial failure is a no-op instead of a double reservation.
+   * Throws InsufficientStockError (rolling back) if any line is unavailable.
    */
-  async reserve(items: OrderItem[]): Promise<void> {
+  async reserve(
+    orderId: string,
+    items: OrderItem[],
+  ): Promise<'reserved' | 'already-reserved'> {
     const lines = toLines(items);
-    await prisma.$transaction(async (tx) => {
+    return prisma.$transaction(async (tx) => {
+      const existing = await tx.inventoryReservation.findUnique({
+        where: { orderId },
+      });
+      if (existing) {
+        return 'already-reserved' as const;
+      }
+
       // Lock rows in a stable (sorted) order to avoid deadlocks.
       const skus = [...new Set(lines.map((l) => l.sku))].sort();
-      const locked = await tx.$queryRaw<Array<{ sku: string; available: number }>>(
+      const locked = await tx.$queryRaw<
+        Array<{ sku: string; available: number }>
+      >(
         Prisma.sql`SELECT * FROM "inventory_items" WHERE "sku" = ANY(${skus}::text[]) FOR UPDATE`,
       );
       const bySku = new Map(locked.map((row) => [row.sku, row]));
@@ -62,10 +85,14 @@ export const inventoryRepository = {
       for (const line of lines) {
         const row = bySku.get(line.sku);
         if (!row) {
-          throw new Error(`Unknown SKU: ${line.sku}`);
+          throw new UnknownSkuError(line.sku);
         }
         if (row.available < line.quantity) {
-          throw new InsufficientStockError(line.sku, line.quantity, row.available);
+          throw new InsufficientStockError(
+            line.sku,
+            line.quantity,
+            row.available,
+          );
         }
       }
 
@@ -78,25 +105,52 @@ export const inventoryRepository = {
           },
         });
       }
+
+      await tx.inventoryReservation.create({ data: { orderId } });
+      return 'reserved' as const;
     });
   },
 
   /**
    * Release previously reserved stock (compensation when an order fails after
-   * reservation). Best-effort: a missing/negative `reserved` is clamped.
+   * reservation). Only the currently reserved amount is returned, so a
+   * duplicate/over-release cannot drive `reserved` negative or inflate stock.
+   * Idempotent: releasing twice is a no-op once the reservation is gone.
    */
-  async release(items: OrderItem[]): Promise<void> {
+  async release(orderId: string, items: OrderItem[]): Promise<void> {
     const lines = toLines(items);
     await prisma.$transaction(async (tx) => {
+      const existing = await tx.inventoryReservation.findUnique({
+        where: { orderId },
+      });
+      if (!existing) {
+        return;
+      }
+
+      const skus = [...new Set(lines.map((l) => l.sku))].sort();
+      const locked = await tx.$queryRaw<
+        Array<{ sku: string; reserved: number }>
+      >(
+        Prisma.sql`SELECT "sku", "reserved" FROM "inventory_items" WHERE "sku" = ANY(${skus}::text[]) FOR UPDATE`,
+      );
+      const bySku = new Map(locked.map((row) => [row.sku, row.reserved]));
+
       for (const line of lines) {
+        const currentlyReserved = bySku.get(line.sku) ?? 0;
+        const releaseQty = Math.min(line.quantity, currentlyReserved);
+        if (releaseQty <= 0) {
+          continue;
+        }
         await tx.inventoryItem.update({
           where: { sku: line.sku },
           data: {
-            available: { increment: line.quantity },
-            reserved: { decrement: line.quantity },
+            available: { increment: releaseQty },
+            reserved: { decrement: releaseQty },
           },
         });
       }
+
+      await tx.inventoryReservation.delete({ where: { orderId } });
     });
   },
 

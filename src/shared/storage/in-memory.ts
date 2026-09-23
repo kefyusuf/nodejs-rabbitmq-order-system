@@ -4,9 +4,9 @@ import { CreateOrderInput, OrderStatus } from '../types/order';
 import { OrderRecord, OrderStore } from './OrderStore';
 
 /**
- * Tek süreçli (beginner) ve test ortamı için hafif bir mağaza.
- * Başka bir processten erişilemez — beginner tier'da api + worker aynı
- * node sürecinde çalışır ki bu bellek paylaşılabilsin.
+ * Lightweight store for the single-process beginner tier and unit tests.
+ * Not shared across processes — in beginner, api + worker run in one Node
+ * process so this map is shared memory.
  */
 export class InMemoryOrderStore implements OrderStore {
   private readonly orders = new Map<string, OrderRecord>();

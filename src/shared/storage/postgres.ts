@@ -7,9 +7,9 @@ import { CreateOrderInput, OrderStatus } from '../types/order';
 import { OrderRecord, OrderStore } from './OrderStore';
 
 /**
- * Hero seviyesi — PostgreSQL (Prisma) kalıcılık.
- * Order, aynı transaction içinde Outbox kaydıyla yazılır (transactional
- * outbox); ayrı bir relay servisi event'i RabbitMQ'ya yayınlar.
+ * Hero-tier persistence on PostgreSQL (Prisma).
+ * The order and its outbox row are written in one transaction (transactional
+ * outbox); a separate relay service publishes the event to RabbitMQ.
  */
 function mapOrder(order: {
   id: string;
@@ -47,6 +47,8 @@ export class PostgresOrderStore implements OrderStore {
 
       await tx.outbox.create({
         data: {
+          // Deterministic message id: outbox redeliveries dedupe downstream.
+          id: `order.created:${created.id}`,
           aggregateType: 'order',
           aggregateId: created.id,
           type: ROUTING_KEYS.ORDER_CREATED,

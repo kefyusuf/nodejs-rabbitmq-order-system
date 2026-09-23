@@ -1,8 +1,13 @@
 import { Channel, ConsumeMessage } from 'amqplib';
-import { createHash } from 'node:crypto';
-import { disconnectPrisma, prisma } from '../shared/db/prisma';
+import { disconnectPrisma } from '../shared/db/prisma';
 import { closeMessaging, getChannel } from '../shared/messaging/connection';
+import {
+  getMessageId,
+  isAlreadyProcessed,
+  markProcessed,
+} from '../shared/messaging/idempotency';
 import { CONSUMER_SETTINGS, QUEUES } from '../shared/messaging/constants';
+import { republishForRetry } from '../shared/messaging/publisher';
 import { logger } from '../shared/observability/logger';
 import { initTracing } from '../shared/observability/tracing';
 import { registerFaultHandlers } from '../shared/process/process';
@@ -11,73 +16,68 @@ import {
   InventoryReleaseEvent,
   OrderCreatedEvent,
 } from '../shared/types/order';
-import { handleOrderCreated, handleRelease } from './handlers/inventory.handler';
+import {
+  handleOrderCreated,
+  handleRelease,
+} from './handlers/inventory.handler';
 
 registerFaultHandlers();
 initTracing('inventory-worker');
 
-function getMessageId(message: ConsumeMessage): string {
-  if (message.properties.messageId) {
-    return message.properties.messageId;
-  }
-  return createHash('sha256').update(message.content).digest('hex');
+const RETRY_HEADER = 'x-retry-count';
+
+function getRetryCount(message: ConsumeMessage): number {
+  const value = message.properties.headers?.[RETRY_HEADER];
+  return typeof value === 'number' ? value : 0;
 }
 
-// Idempotency: skip redeliveries already processed (crashes/reconnects).
-async function alreadyProcessed(messageId: string, queue: string): Promise<boolean> {
-  const existing = await prisma.processedMessage.findUnique({
-    where: { messageId },
-  });
-  if (existing) {
-    return true;
-  }
-  await prisma.processedMessage.create({ data: { messageId, queue } });
-  return false;
-}
-
-async function processReserve(
+async function handleWithRetry(
   channel: Channel,
-  message: ConsumeMessage | null,
+  message: ConsumeMessage,
+  queue: string,
+  retryQueue: string,
+  dlq: string,
+  run: (eventJson: string) => Promise<void>,
 ): Promise<void> {
-  if (!message) return;
   const messageId = getMessageId(message);
 
-  if (await alreadyProcessed(messageId, QUEUES.INVENTORY_RESERVE)) {
+  // Claim only after success so a crash mid-handler does not swallow the message.
+  if (await isAlreadyProcessed(messageId)) {
     channel.ack(message);
     return;
   }
 
   try {
-    const event = JSON.parse(message.content.toString()) as OrderCreatedEvent;
-    await handleOrderCreated(event);
+    await run(message.content.toString());
+    await markProcessed(messageId, queue);
     channel.ack(message);
   } catch (error) {
-    logger.error({ err: error }, 'Failed to reserve stock');
-    // Inventory reservation is not retried here; failure is communicated via
-    // the inventory.reservation.failed event published inside the handler.
-    channel.ack(message);
-  }
-}
+    const retryCount = getRetryCount(message);
 
-async function processRelease(
-  channel: Channel,
-  message: ConsumeMessage | null,
-): Promise<void> {
-  if (!message) return;
-  const messageId = getMessageId(message);
+    // Malformed payloads will never succeed — skip retries and DLQ them.
+    if (error instanceof SyntaxError) {
+      logger.error(
+        { err: error },
+        `Malformed message, dead-lettering to ${dlq}`,
+      );
+      channel.nack(message, false, false);
+      return;
+    }
 
-  if (await alreadyProcessed(messageId, QUEUES.INVENTORY_RELEASE)) {
-    channel.ack(message);
-    return;
-  }
-
-  try {
-    const event = JSON.parse(message.content.toString()) as InventoryReleaseEvent;
-    await handleRelease(event);
-    channel.ack(message);
-  } catch (error) {
-    logger.error({ err: error }, 'Failed to release stock');
-    channel.ack(message);
+    logger.error({ err: error }, `Failed to process ${queue} message`);
+    if (retryCount < CONSUMER_SETTINGS.MAX_RETRIES) {
+      await republishForRetry(
+        retryQueue,
+        message.content,
+        message.properties,
+        RETRY_HEADER,
+        retryCount + 1,
+      );
+      channel.ack(message);
+    } else {
+      channel.nack(message, false, false);
+      logger.error(`Message moved to dead letter queue: ${dlq}`);
+    }
   }
 }
 
@@ -86,10 +86,33 @@ async function startConsuming(): Promise<void> {
   await channel.prefetch(CONSUMER_SETTINGS.PREFETCH_COUNT);
 
   await channel.consume(QUEUES.INVENTORY_RESERVE, (message) => {
-    void processReserve(channel, message);
+    if (!message) return;
+    void handleWithRetry(
+      channel,
+      message,
+      QUEUES.INVENTORY_RESERVE,
+      QUEUES.INVENTORY_RESERVE_RETRY,
+      QUEUES.INVENTORY_RESERVE_DLQ,
+      async (body) => {
+        const event = JSON.parse(body) as OrderCreatedEvent;
+        await handleOrderCreated(event);
+      },
+    );
   });
+
   await channel.consume(QUEUES.INVENTORY_RELEASE, (message) => {
-    void processRelease(channel, message);
+    if (!message) return;
+    void handleWithRetry(
+      channel,
+      message,
+      QUEUES.INVENTORY_RELEASE,
+      QUEUES.INVENTORY_RELEASE_RETRY,
+      QUEUES.INVENTORY_RELEASE_DLQ,
+      async (body) => {
+        const event = JSON.parse(body) as InventoryReleaseEvent;
+        await handleRelease(event);
+      },
+    );
   });
 
   logger.info(

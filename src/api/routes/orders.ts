@@ -7,47 +7,62 @@ import { trace } from '@opentelemetry/api';
 const tracer = trace.getTracer('order-api');
 
 export async function orderRoutes(app: FastifyInstance): Promise<void> {
-  app.post('/orders', { preHandler: [app.authenticate] }, async (request, reply) => {
-    const parsed = createOrderSchema.safeParse(request.body);
+  app.post(
+    '/orders',
+    { preHandler: [app.authenticate] },
+    async (request, reply) => {
+      const parsed = createOrderSchema.safeParse(request.body);
 
-    if (!parsed.success) {
-      return reply.status(400).send({
-        error: 'Validation failed',
-        details: parsed.error.flatten(),
-      });
-    }
-
-    const order = await tracer.startActiveSpan('createOrder', async (span) => {
-      try {
-        const created = await orderRepository.create(parsed.data);
-        span.setAttribute('order.id', created.id);
-        return created;
-      } finally {
-        span.end();
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: 'Validation failed',
+          details: parsed.error.flatten(),
+        });
       }
-    });
 
-    ordersCreatedTotal.inc();
+      const order = await tracer.startActiveSpan(
+        'createOrder',
+        async (span) => {
+          try {
+            const created = await orderRepository.create(parsed.data);
+            span.setAttribute('order.id', created.id);
+            return created;
+          } finally {
+            span.end();
+          }
+        },
+      );
 
-    // The event is persisted in the outbox (transactional outbox pattern);
-    // a separate relay service publishes it to RabbitMQ. The order stays
-    // PENDING until the worker processes it.
-    return reply.status(201).send({ ...order, eventStored: true });
-  });
+      ordersCreatedTotal.inc();
 
-  app.get('/orders/:id', async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const order = await orderRepository.findById(id);
+      // The event is persisted in the outbox (transactional outbox pattern);
+      // a separate relay service publishes it to RabbitMQ. The order stays
+      // PENDING until the worker processes it.
+      return reply.status(201).send({ ...order, eventStored: true });
+    },
+  );
 
-    if (!order) {
-      return reply.status(404).send({ error: 'Order not found' });
-    }
+  app.get(
+    '/orders/:id',
+    { preHandler: [app.authenticate] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const order = await orderRepository.findById(id);
 
-    return reply.send(order);
-  });
+      if (!order) {
+        return reply.status(404).send({ error: 'Order not found' });
+      }
 
-  app.get('/orders', async (_request, reply) => {
-    const orders = await orderRepository.findAll();
-    return reply.send(orders);
-  });
+      return reply.send(order);
+    },
+  );
+
+  app.get(
+    '/orders',
+    { preHandler: [app.authenticate] },
+    async (_request, reply) => {
+      const orders = await orderRepository.findAll();
+      return reply.send(orders);
+    },
+  );
 }

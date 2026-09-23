@@ -57,7 +57,10 @@ export const mailer = {
 
     if (env.MAIL_MODE === 'console') {
       // info.message is the serialised RFC822 message (JSON transport).
-      console.log('[mailer:console] email not sent:', JSON.stringify(info.message));
+      console.log(
+        '[mailer:console] email not sent:',
+        JSON.stringify(info.message),
+      );
     } else {
       console.log(`[mailer] sent email to ${message.to} (${info.messageId})`);
     }

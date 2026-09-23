@@ -28,7 +28,9 @@ export async function handleInventoryReserved(
   await tracer.startActiveSpan('handleInventoryReserved', async (span) => {
     span.setAttribute('order.id', event.orderId);
     try {
-      console.log(`Processing order ${event.orderId} for ${event.customerName}`);
+      console.log(
+        `Processing order ${event.orderId} for ${event.customerName}`,
+      );
 
       await sleep(PROCESSING_DELAY_MS);
 
@@ -42,14 +44,26 @@ export async function handleInventoryReserved(
       };
 
       if (status === 'CONFIRMED') {
-        await publishMessage(ROUTING_KEYS.ORDER_CONFIRMED, processedEvent);
+        await publishMessage(
+          ROUTING_KEYS.ORDER_CONFIRMED,
+          processedEvent,
+          `order.confirmed:${event.orderId}`,
+        );
       } else {
         // Business rule rejected the order after stock was reserved: release it.
-        await publishMessage(ROUTING_KEYS.INVENTORY_RELEASE, {
-          orderId: event.orderId,
-          items: event.items,
-        });
-        await publishMessage(ROUTING_KEYS.ORDER_FAILED, processedEvent);
+        await publishMessage(
+          ROUTING_KEYS.INVENTORY_RELEASE,
+          {
+            orderId: event.orderId,
+            items: event.items,
+          },
+          `inventory.release:${event.orderId}`,
+        );
+        await publishMessage(
+          ROUTING_KEYS.ORDER_FAILED,
+          processedEvent,
+          `order.failed:${event.orderId}`,
+        );
       }
 
       console.log(`Order ${event.orderId} processed with status: ${status}`);
@@ -75,7 +89,11 @@ export async function handleInventoryFailed(
         status: 'FAILED',
         processedAt: new Date().toISOString(),
       };
-      await publishMessage(ROUTING_KEYS.ORDER_FAILED, processedEvent);
+      await publishMessage(
+        ROUTING_KEYS.ORDER_FAILED,
+        processedEvent,
+        `order.failed:${event.orderId}`,
+      );
     } finally {
       span.end();
     }

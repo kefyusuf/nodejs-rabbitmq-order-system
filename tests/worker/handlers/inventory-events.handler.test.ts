@@ -61,6 +61,7 @@ describe('order worker (inventory saga)', () => {
     expect(mockedPublish).toHaveBeenCalledWith(
       'order.confirmed',
       expect.objectContaining({ orderId: 'order-1', status: 'CONFIRMED' }),
+      'order.confirmed:order-1',
     );
   });
 
@@ -73,10 +74,12 @@ describe('order worker (inventory saga)', () => {
     expect(mockedPublish).toHaveBeenCalledWith(
       'inventory.release',
       expect.objectContaining({ orderId: 'order-1', items }),
+      'inventory.release:order-1',
     );
     expect(mockedPublish).toHaveBeenCalledWith(
       'order.failed',
       expect.objectContaining({ orderId: 'order-1', status: 'FAILED' }),
+      'order.failed:order-1',
     );
   });
 
@@ -88,6 +91,7 @@ describe('order worker (inventory saga)', () => {
     expect(mockedPublish).toHaveBeenCalledWith(
       'order.failed',
       expect.objectContaining({ orderId: 'order-1', status: 'FAILED' }),
+      'order.failed:order-1',
     );
   });
 

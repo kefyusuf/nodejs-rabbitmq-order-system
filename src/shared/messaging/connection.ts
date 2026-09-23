@@ -1,4 +1,4 @@
-import amqp, { Channel, ChannelModel } from 'amqplib';
+import amqp, { ConfirmChannel, ChannelModel } from 'amqplib';
 import { env } from '../config/env';
 import { logger } from '../observability/logger';
 import {
@@ -10,15 +10,18 @@ import {
 } from './constants';
 
 let connection: ChannelModel | null = null;
-let channel: Channel | null = null;
-let connecting: Promise<Channel> | null = null;
+let channel: ConfirmChannel | null = null;
+let connecting: Promise<ConfirmChannel> | null = null;
 
 /**
  * amqplib 0.10 'recovery' option auto-reconnects the connection and recovers
  * channels (re-declares the topology and re-registers consumers). No hand-rolled
  * reconnect loop is needed; callers just await getChannel() and publish.
+ *
+ * A confirm channel is used so publishers can wait for a broker ack before
+ * treating a message as delivered (required by the transactional outbox).
  */
-export async function getChannel(): Promise<Channel> {
+export async function getChannel(): Promise<ConfirmChannel> {
   if (channel) {
     return channel;
   }
@@ -32,7 +35,7 @@ export async function getChannel(): Promise<Channel> {
   return connecting;
 }
 
-async function establishChannel(): Promise<Channel> {
+async function establishChannel(): Promise<ConfirmChannel> {
   const conn = await amqp.connect(env.RABBITMQ_URL, { recovery: true });
 
   conn.on('error', (error: Error) => {
@@ -44,7 +47,7 @@ async function establishChannel(): Promise<Channel> {
     connection = null;
   });
 
-  const ch = await conn.createChannel();
+  const ch = await conn.createConfirmChannel();
   await assertTopology(ch);
 
   connection = conn;
@@ -54,21 +57,50 @@ async function establishChannel(): Promise<Channel> {
   return ch;
 }
 
-async function assertTopology(ch: Channel): Promise<void> {
+/**
+ * Retryable work queue: rejected messages dead-letter to the DLX, while
+ * delayed retries park in a TTL queue that routes back to the main queue.
+ */
+async function assertRetryableQueue(
+  ch: ConfirmChannel,
+  queue: string,
+  retryQueue: string,
+  dlq: string,
+  deadRoutingKey: string,
+): Promise<void> {
+  await ch.assertQueue(queue, {
+    durable: true,
+    arguments: {
+      'x-dead-letter-exchange': DEAD_LETTER_EXCHANGE_NAME,
+      'x-dead-letter-routing-key': deadRoutingKey,
+    },
+  });
+  await ch.assertQueue(retryQueue, {
+    durable: true,
+    arguments: {
+      'x-message-ttl': CONSUMER_SETTINGS.RETRY_DELAY_MS,
+      'x-dead-letter-exchange': '',
+      'x-dead-letter-routing-key': queue,
+    },
+  });
+  await ch.assertQueue(dlq, { durable: true });
+  await ch.bindQueue(dlq, DEAD_LETTER_EXCHANGE_NAME, deadRoutingKey);
+}
+
+async function assertTopology(ch: ConfirmChannel): Promise<void> {
   await ch.assertExchange(EXCHANGE_NAME, 'topic', { durable: true });
   await ch.assertExchange(DEAD_LETTER_EXCHANGE_NAME, 'direct', {
     durable: true,
   });
 
-  // Rejected messages from the main queue are dead-lettered to orders.dlx.
-  await ch.assertQueue(QUEUES.ORDER_PROCESSING, {
-    durable: true,
-    arguments: {
-      'x-dead-letter-exchange': DEAD_LETTER_EXCHANGE_NAME,
-      'x-dead-letter-routing-key': ROUTING_KEYS.ORDER_PROCESSING_DEAD,
-    },
-  });
-  // The worker now reacts to inventory events (the order is only confirmed
+  await assertRetryableQueue(
+    ch,
+    QUEUES.ORDER_PROCESSING,
+    QUEUES.ORDER_PROCESSING_RETRY,
+    QUEUES.ORDER_PROCESSING_DLQ,
+    ROUTING_KEYS.ORDER_PROCESSING_DEAD,
+  );
+  // The worker reacts to inventory events (the order is only confirmed
   // once stock has been reserved by the inventory service).
   await ch.bindQueue(
     QUEUES.ORDER_PROCESSING,
@@ -82,7 +114,13 @@ async function assertTopology(ch: Channel): Promise<void> {
   );
 
   // Inventory service: reserve stock when an order is created.
-  await ch.assertQueue(QUEUES.INVENTORY_RESERVE, { durable: true });
+  await assertRetryableQueue(
+    ch,
+    QUEUES.INVENTORY_RESERVE,
+    QUEUES.INVENTORY_RESERVE_RETRY,
+    QUEUES.INVENTORY_RESERVE_DLQ,
+    ROUTING_KEYS.INVENTORY_RESERVE_DEAD,
+  );
   await ch.bindQueue(
     QUEUES.INVENTORY_RESERVE,
     EXCHANGE_NAME,
@@ -90,33 +128,27 @@ async function assertTopology(ch: Channel): Promise<void> {
   );
 
   // Inventory service: release previously reserved stock (compensation).
-  await ch.assertQueue(QUEUES.INVENTORY_RELEASE, { durable: true });
+  await assertRetryableQueue(
+    ch,
+    QUEUES.INVENTORY_RELEASE,
+    QUEUES.INVENTORY_RELEASE_RETRY,
+    QUEUES.INVENTORY_RELEASE_DLQ,
+    ROUTING_KEYS.INVENTORY_RELEASE_DEAD,
+  );
   await ch.bindQueue(
     QUEUES.INVENTORY_RELEASE,
     EXCHANGE_NAME,
     ROUTING_KEYS.INVENTORY_RELEASE,
   );
 
-  // Expired retry messages are routed back to the main queue via the
-  // default exchange, preserving their headers (x-retry-count).
-  await ch.assertQueue(QUEUES.ORDER_PROCESSING_RETRY, {
-    durable: true,
-    arguments: {
-      'x-message-ttl': CONSUMER_SETTINGS.RETRY_DELAY_MS,
-      'x-dead-letter-exchange': '',
-      'x-dead-letter-routing-key': QUEUES.ORDER_PROCESSING,
-    },
-  });
-
-  await ch.assertQueue(QUEUES.ORDER_PROCESSING_DLQ, { durable: true });
-  await ch.bindQueue(
-    QUEUES.ORDER_PROCESSING_DLQ,
-    DEAD_LETTER_EXCHANGE_NAME,
-    ROUTING_KEYS.ORDER_PROCESSING_DEAD,
-  );
-
   // Fan-out of processed order events to the notification worker.
-  await ch.assertQueue(QUEUES.ORDER_NOTIFICATIONS, { durable: true });
+  await assertRetryableQueue(
+    ch,
+    QUEUES.ORDER_NOTIFICATIONS,
+    QUEUES.ORDER_NOTIFICATIONS_RETRY,
+    QUEUES.ORDER_NOTIFICATIONS_DLQ,
+    ROUTING_KEYS.ORDER_NOTIFICATIONS_DEAD,
+  );
   await ch.bindQueue(
     QUEUES.ORDER_NOTIFICATIONS,
     EXCHANGE_NAME,
@@ -146,5 +178,7 @@ export async function closeMessaging(): Promise<void> {
 // Liveness/readiness signal: true once the channel has been asserted and is
 // still open. Lets the API report whether it can actually reach the broker.
 export function isMessagingConnected(): boolean {
-  return channel !== null && !(channel as unknown as { closed: boolean }).closed;
+  return (
+    channel !== null && !(channel as unknown as { closed: boolean }).closed
+  );
 }

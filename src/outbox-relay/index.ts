@@ -30,7 +30,10 @@ async function publishPending(): Promise<void> {
 
     for (const row of pending) {
       await publishMessage(row.type, row.payload, row.id);
-      await tx.outbox.update({ where: { id: row.id }, data: { published: true } });
+      await tx.outbox.update({
+        where: { id: row.id },
+        data: { published: true },
+      });
     }
 
     return pending;

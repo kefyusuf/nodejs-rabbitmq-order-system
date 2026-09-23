@@ -1,5 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
+import {
+  GenericContainer,
+  Wait,
+  type StartedTestContainer,
+} from 'testcontainers';
 import { spawn, type ChildProcess, execSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
@@ -60,10 +64,16 @@ async function getToken(): Promise<string> {
 async function postOrder(token: string, items: unknown[]) {
   const res = await fetch(`${API_URL}/orders`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', authorization: `Bearer ${token}` },
+    headers: {
+      'Content-Type': 'application/json',
+      authorization: `Bearer ${token}`,
+    },
     body: JSON.stringify({ customerName: 'E2E', items }),
   });
-  return { statusCode: res.status, body: (await res.json()) as { id: string; status: string } };
+  return {
+    statusCode: res.status,
+    body: (await res.json()) as { id: string; status: string },
+  };
 }
 
 async function getOrder(token: string, id: string) {
@@ -75,7 +85,11 @@ async function getOrder(token: string, id: string) {
 
 async function getInventory(sku: string) {
   const res = await fetch(`${API_URL}/inventory/${sku}`);
-  return (await res.json()) as { sku: string; available: number; reserved: number };
+  return (await res.json()) as {
+    sku: string;
+    available: number;
+    reserved: number;
+  };
 }
 
 async function waitStatus(token: string, id: string, want: string) {
@@ -99,7 +113,10 @@ beforeAll(async () => {
     .start();
 
   rabbit = await new GenericContainer('rabbitmq:3-management')
-    .withEnvironment({ RABBITMQ_DEFAULT_USER: 'guest', RABBITMQ_DEFAULT_PASS: 'guest' })
+    .withEnvironment({
+      RABBITMQ_DEFAULT_USER: 'guest',
+      RABBITMQ_DEFAULT_PASS: 'guest',
+    })
     .withExposedPorts(5672, 15672)
     .withWaitStrategy(Wait.forListeningPorts())
     .start();
@@ -126,12 +143,20 @@ beforeAll(async () => {
   spawnService('src/notification-worker/index.ts', true);
   spawnService('src/api/index.ts');
 
-  await waitFor(async () => (await fetch(`${API_URL}/health`)).ok, 30000, 'api health');
-  await waitFor(async () => {
-    const res = await fetch(`${API_URL}/inventory`);
-    if (!res.ok) return false;
-    return ((await res.json()) as unknown[]).length === 3;
-  }, 30000, 'inventory seeded');
+  await waitFor(
+    async () => (await fetch(`${API_URL}/health`)).ok,
+    30000,
+    'api health',
+  );
+  await waitFor(
+    async () => {
+      const res = await fetch(`${API_URL}/inventory`);
+      if (!res.ok) return false;
+      return ((await res.json()) as unknown[]).length === 3;
+    },
+    30000,
+    'inventory seeded',
+  );
   // Let the remaining consumers finish binding their queues.
   await new Promise((r) => setTimeout(r, 2000));
 }, 180000);

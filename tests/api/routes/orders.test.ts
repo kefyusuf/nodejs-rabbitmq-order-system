@@ -35,8 +35,14 @@ const validBody = {
   items: [{ productId: 'p-1', name: 'Keyboard', quantity: 1, unitPrice: 500 }],
 };
 
-async function getToken(app: Awaited<ReturnType<typeof buildApp>>): Promise<string> {
-  const res = await app.inject({ method: 'POST', url: '/auth/token', payload: { username: 'tester' } });
+async function getToken(
+  app: Awaited<ReturnType<typeof buildApp>>,
+): Promise<string> {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/auth/token',
+    payload: { username: 'tester' },
+  });
   return (res.json() as { token: string }).token;
 }
 
@@ -96,11 +102,25 @@ describe('order routes', () => {
     await app.close();
   });
 
-  it('GET /orders/:id returns 404 for unknown ids', async () => {
+  it('GET /orders/:id returns 401 without a token', async () => {
     const app = await buildApp({ logger: false });
-    mockedFindById.mockResolvedValue(null);
 
     const response = await app.inject({ method: 'GET', url: '/orders/nope' });
+
+    expect(response.statusCode).toBe(401);
+    await app.close();
+  });
+
+  it('GET /orders/:id returns 404 for unknown ids', async () => {
+    const app = await buildApp({ logger: false });
+    const token = await getToken(app);
+    mockedFindById.mockResolvedValue(null);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/orders/nope',
+      headers: { authorization: `Bearer ${token}` },
+    });
 
     expect(response.statusCode).toBe(404);
     await app.close();
@@ -108,9 +128,16 @@ describe('order routes', () => {
 
   it('GET /orders/:id returns the order when it exists', async () => {
     const app = await buildApp({ logger: false });
-    mockedFindById.mockResolvedValue(buildOrder({ status: 'CONFIRMED', id: 'known' }));
+    const token = await getToken(app);
+    mockedFindById.mockResolvedValue(
+      buildOrder({ status: 'CONFIRMED', id: 'known' }),
+    );
 
-    const response = await app.inject({ method: 'GET', url: '/orders/known' });
+    const response = await app.inject({
+      method: 'GET',
+      url: '/orders/known',
+      headers: { authorization: `Bearer ${token}` },
+    });
 
     expect(response.statusCode).toBe(200);
     expect(response.json().status).toBe('CONFIRMED');
@@ -119,15 +146,29 @@ describe('order routes', () => {
 
   it('GET /orders lists all orders', async () => {
     const app = await buildApp({ logger: false });
+    const token = await getToken(app);
     mockedFindAll.mockResolvedValue([
       buildOrder(),
       buildOrder({ id: 'order-2', customerName: 'Bob' }),
     ]);
 
-    const response = await app.inject({ method: 'GET', url: '/orders' });
+    const response = await app.inject({
+      method: 'GET',
+      url: '/orders',
+      headers: { authorization: `Bearer ${token}` },
+    });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toHaveLength(2);
+    await app.close();
+  });
+
+  it('GET /orders returns 401 without a token', async () => {
+    const app = await buildApp({ logger: false });
+
+    const response = await app.inject({ method: 'GET', url: '/orders' });
+
+    expect(response.statusCode).toBe(401);
     await app.close();
   });
 });

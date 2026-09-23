@@ -27,9 +27,9 @@ function deserialize(raw: string | null): OrderRecord | null {
 }
 
 /**
- * mid seviyesi — Redis (ioredis) kalıcılık.
- * Tek süreçli değil: api ve worker ayrı proseslerde olabilir,
- * çünkü durum paylaşık bir dış veri kaynağındadır.
+ * Mid-tier persistence backed by Redis (ioredis).
+ * Multi-process safe: api and worker can run in separate processes because
+ * state lives in an external store.
  */
 export class RedisOrderStore implements OrderStore {
   private readonly client: IORedis;

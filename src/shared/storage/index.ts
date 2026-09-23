@@ -5,11 +5,11 @@ import { RedisOrderStore } from './redis';
 import { PostgresOrderStore } from './postgres';
 
 /**
- * STORE env değerine göre adapter seçilir.
+ * Selects the adapter based on the STORE env value.
  *
- *  in-memory  : beginner (tek süreç)
- *  redis      : mid     (ioredis, çok süreçli)
- *  postgres   : hero    (Prisma, varsayılan)
+ *  in-memory  : beginner (single process)
+ *  redis      : mid      (ioredis, multi-process)
+ *  postgres   : hero     (Prisma, default)
  */
 export function createOrderStore(): OrderStore {
   switch (env.STORE) {

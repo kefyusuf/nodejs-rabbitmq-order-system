@@ -61,3 +61,12 @@ model InventoryItem {
 
   @@map("inventory_items")
 }
+
+// One reservation per order: makes reserve idempotent so consumer retries
+// after a partial failure (e.g. publish error) cannot double-decrement stock.
+model InventoryReservation {
+  orderId   String   @id
+  createdAt DateTime @default(now())
+
+  @@map("inventory_reservations")
+}

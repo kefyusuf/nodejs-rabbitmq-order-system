@@ -1,9 +1,21 @@
 import { Channel, ConsumeMessage } from 'amqplib';
-import { createHash } from 'node:crypto';
-import { disconnectPrisma, prisma } from '../shared/db/prisma';
+import { disconnectPrisma } from '../shared/db/prisma';
 import { closeMessaging, getChannel } from '../shared/messaging/connection';
-import { CONSUMER_SETTINGS, QUEUES, ROUTING_KEYS } from '../shared/messaging/constants';
-import { orderEventsDeadLetteredTotal, orderEventsProcessedTotal } from '../shared/observability/metrics';
+import {
+  getMessageId,
+  isAlreadyProcessed,
+  markProcessed,
+} from '../shared/messaging/idempotency';
+import {
+  CONSUMER_SETTINGS,
+  QUEUES,
+  ROUTING_KEYS,
+} from '../shared/messaging/constants';
+import { republishForRetry } from '../shared/messaging/publisher';
+import {
+  orderEventsDeadLetteredTotal,
+  orderEventsProcessedTotal,
+} from '../shared/observability/metrics';
 import { logger } from '../shared/observability/logger';
 import { initTracing } from '../shared/observability/tracing';
 import { registerFaultHandlers } from '../shared/process/process';
@@ -26,13 +38,6 @@ function getRetryCount(message: ConsumeMessage): number {
   return typeof value === 'number' ? value : 0;
 }
 
-function getMessageId(message: ConsumeMessage): string {
-  if (message.properties.messageId) {
-    return message.properties.messageId;
-  }
-  return createHash('sha256').update(message.content).digest('hex');
-}
-
 async function processMessage(
   channel: Channel,
   message: ConsumeMessage | null,
@@ -45,10 +50,7 @@ async function processMessage(
 
   // Idempotency: skip redeliveries that were already processed
   // (retries after a crash, or reconnects that replay unacked messages).
-  const already = await prisma.processedMessage.findUnique({
-    where: { messageId },
-  });
-  if (already) {
+  if (await isAlreadyProcessed(messageId)) {
     channel.ack(message);
     return;
   }
@@ -56,7 +58,9 @@ async function processMessage(
   try {
     // The worker reacts to inventory saga events, not order.created directly:
     // the order is only confirmed after stock has been reserved.
-    if (message.fields.routingKey === ROUTING_KEYS.INVENTORY_RESERVATION_FAILED) {
+    if (
+      message.fields.routingKey === ROUTING_KEYS.INVENTORY_RESERVATION_FAILED
+    ) {
       const event = JSON.parse(
         message.content.toString(),
       ) as InventoryReservationFailedEvent;
@@ -67,9 +71,8 @@ async function processMessage(
       ) as InventoryReservedEvent;
       await handleInventoryReserved(event);
     }
-    await prisma.processedMessage.create({
-      data: { messageId, queue: QUEUES.ORDER_PROCESSING },
-    });
+
+    await markProcessed(messageId, QUEUES.ORDER_PROCESSING);
     orderEventsProcessedTotal.inc();
     channel.ack(message);
   } catch (error) {
@@ -80,11 +83,14 @@ async function processMessage(
     );
 
     if (retryCount < CONSUMER_SETTINGS.MAX_RETRIES) {
-      channel.publish('', QUEUES.ORDER_PROCESSING_RETRY, message.content, {
-        contentType: 'application/json',
-        persistent: true,
-        headers: { [RETRY_HEADER]: retryCount + 1 },
-      });
+      // Preserve messageId so outbox redeliveries still dedupe after a retry.
+      await republishForRetry(
+        QUEUES.ORDER_PROCESSING_RETRY,
+        message.content,
+        message.properties,
+        RETRY_HEADER,
+        retryCount + 1,
+      );
       channel.ack(message);
       logger.warn(
         `Message scheduled for retry in ${CONSUMER_SETTINGS.RETRY_DELAY_MS}ms (attempt ${retryCount + 1}/${CONSUMER_SETTINGS.MAX_RETRIES})`,

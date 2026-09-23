@@ -22,7 +22,11 @@ describe('mailer', () => {
   beforeEach(() => sendMailMock.mockClear());
 
   it('sends with the configured from address and recipient', async () => {
-    await mailer.sendMail({ to: 'to@example.com', subject: 'Hi', text: 'Body' });
+    await mailer.sendMail({
+      to: 'to@example.com',
+      subject: 'Hi',
+      text: 'Body',
+    });
 
     expect(createTransportMock).toHaveBeenCalled();
     expect(sendMailMock).toHaveBeenCalledWith(

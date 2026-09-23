@@ -60,52 +60,58 @@ next one. The order is only `CONFIRMED` after stock has actually been reserved.
    (saga compensation).
 6. The **notification worker** consumes `order.confirmed`/`order.failed` and
    sends a simulated customer email.
-7. Clients poll `GET /orders/{id}` to observe the status transition.
+7. Clients poll `GET /orders/{id}` (JWT required) to observe the status transition.
 
 ### Services
 
-| Service          | Port           | Description                                           |
-| ---------------- | -------------- | ----------------------------------------------------- |
-| **api**          | 3000 (8080 dev)| Fastify REST API — create/query orders, JWT, metrics   |
-| **worker**       | —              | Consumer — react to inventory events, update status    |
-| **inventory**    | —              | Consumer — reserve/release stock (saga step)           |
-| **notification** | —              | Consumer — react to processed orders                   |
-| **relay**        | —              | Outbox → RabbitMQ publisher                           |
-| **postgres**     | 5432 (5433 dev)| Order database + Outbox + Inventory (Prisma)          |
-| **rabbitmq**     | 5672 / 15672   | Message broker + Management UI (guest/guest)          |
+| Service          | Port            | Description                                          |
+| ---------------- | --------------- | ---------------------------------------------------- |
+| **api**          | 3000 (8080 dev) | Fastify REST API — create/query orders, JWT, metrics |
+| **worker**       | —               | Consumer — react to inventory events, update status  |
+| **inventory**    | —               | Consumer — reserve/release stock (saga step)         |
+| **notification** | —               | Consumer — react to processed orders                 |
+| **relay**        | —               | Outbox → RabbitMQ publisher                          |
+| **postgres**     | 5432 (5433 dev) | Order database + Outbox + Inventory (Prisma)         |
+| **rabbitmq**     | 5672 / 15672    | Message broker + Management UI (guest/guest)         |
 
 > **Standard ports.** The canonical ports are **API 3000**, **RabbitMQ 5672**
 > (AMQP) / **15672** (Management UI) and **PostgreSQL 5432** (also common:
 > 8080 / 8000 for HTTP services). The local `docker-compose.override.yml`
-> shifts the **host** ports (API → 8080, Postgres → 5433, RabbitMQ → 5673 /
-> 15673) so this stack doesn't collide with other projects already using the
+> shifts the **host** ports (API → 8080, Postgres → 5433, RabbitMQ → 5673 / 15673) so this stack doesn't collide with other projects already using the
 > standard ports. Container-internal traffic always uses the standard ports,
 > so `DATABASE_URL` / `RABBITMQ_URL` stay unchanged.
 
 ## RabbitMQ topology
 
-| Object                   | Type/Args                                | Purpose                                |
-| ------------------------ | ---------------------------------------- | -------------------------------------- |
-| `orders`                 | topic exchange, durable                  | All order lifecycle events             |
-| `orders.dlx`             | direct exchange, durable                 | Dead letter exchange                   |
-| `inventory.reserve`      | queue bound to `order.created`           | Triggers stock reservation             |
-| `inventory.release`      | queue bound to `inventory.release`       | Releases stock (compensation)          |
+| Object                   | Type/Args                                | Purpose                                   |
+| ------------------------ | ---------------------------------------- | ----------------------------------------- |
+| `orders`                 | topic exchange, durable                  | All order lifecycle events                |
+| `orders.dlx`             | direct exchange, durable                 | Dead letter exchange                      |
+| `inventory.reserve`      | queue bound to `order.created`           | Triggers stock reservation                |
+| `inventory.release`      | queue bound to `inventory.release`       | Releases stock (compensation)             |
 | `order.processing`       | queue, dead-letters to `orders.dlx`      | Main processing queue (inventory outcome) |
-| `order.processing.retry` | queue, TTL 5s, dead-letters back to main | Delayed redelivery for failed messages |
-| `order.processing.dlq`   | queue bound to `orders.dlx`              | Messages that exhausted 3 retries      |
-| `order.notifications`    | queue bound to `order.confirmed/failed`  | Notifications fan-out                  |
+| `order.processing.retry` | queue, TTL 5s, dead-letters back to main | Delayed redelivery for failed messages    |
+| `order.processing.dlq`   | queue bound to `orders.dlx`              | Messages that exhausted 3 retries         |
+| `order.notifications`    | queue bound to `order.confirmed/failed`  | Notifications fan-out                     |
+
+Each work queue (`order.processing`, `inventory.reserve`, `inventory.release`,
+`order.notifications`) has the same retry + DLQ pair
+(`*.retry` TTL 5s → main queue, `*.dlq` via `orders.dlx`).
 
 ## Reliability & correctness
 
 - **Transactional outbox:** the order and its event are written together. The
-  relay guarantees at-least-once delivery; duplicate deliveries are absorbed
+  relay publishes on a **confirm channel** and only marks a row published after
+  the broker acks. Delivery is at-least-once; duplicates are absorbed
   downstream by consumer idempotency.
-- **Idempotent consumers:** the worker records every processed `messageId` in a
+- **Idempotent consumers:** every worker records processed `messageId`s in a
   `processed_messages` table and skips duplicates — safe against broker
-  redeliveries and relay retries.
-- **Bounded retries:** a failing message is republished to the retry queue
-  with an incremented `x-retry-count` header (5s delay per attempt). After
-  3 attempts it is rejected and lands in the DLQ for inspection.
+  redeliveries and relay retries. Claims are written **after** successful
+  handling so a crash mid-handler cannot swallow a message.
+- **Bounded retries:** order, inventory and notification consumers republish
+  failures to their retry queue with an incremented `x-retry-count` header
+  (5s delay per attempt), preserving `messageId`. After 3 attempts the message
+  is rejected and lands in the DLQ for inspection.
 - **Prefetch(1):** the worker acknowledges one message at a time, so a poison
   message cannot flood the process.
 - **Reconnect:** amqplib's built-in `recovery: true` re-establishes consumers
@@ -119,7 +125,7 @@ The outbox relay is the only component that publishes to RabbitMQ, and it is
 designed to run as **multiple replicas** safely:
 
 - Each poll runs `SELECT ... FROM "Outbox" WHERE published = false ... FOR UPDATE
-  SKIP LOCKED` inside a single transaction. `SKIP LOCKED` lets concurrent
+SKIP LOCKED` inside a single transaction. `SKIP LOCKED` lets concurrent
   replicas each claim a **disjoint** batch of rows, so no two replicas ever
   publish the same event.
 - An event is marked `published = true` in the **same transaction** that
@@ -152,7 +158,7 @@ docker compose up -d --build        # base + docker-compose.override.yml (dev po
 docker compose logs -f api worker inventory notification relay
 ```
 
-- API: http://localhost:8080  (standard port is 3000 — see above)
+- API: http://localhost:8080 (standard port is 3000 — see above)
 - RabbitMQ Management UI: http://localhost:15673 (guest / guest)
 
 ### Standard ports (production-like)
@@ -187,7 +193,7 @@ curl -X POST http://localhost:8080/auth/token \
 ```
 
 In this demo the token issuer is open; in production it would exchange real
-credentials. Requests to `POST /orders` must carry the token:
+credentials. Requests to `POST /orders` and `GET /orders*` must carry the token:
 
 ```bash
 curl -X POST http://localhost:8080/orders \
@@ -209,14 +215,13 @@ after). Within a few seconds the worker sets the status to `CONFIRMED` — or
 ### Query orders
 
 ```bash
-curl http://localhost:8080/orders          # list all
-curl http://localhost:8080/orders/{id}     # single order (404 if unknown)
+curl -H "Authorization: Bearer <jwt>" http://localhost:8080/orders          # list all
+curl -H "Authorization: Bearer <jwt>" http://localhost:8080/orders/{id}     # single order (404 if unknown)
 ```
 
 ### Query inventory (read model)
 
-The API exposes current stock levels as a read model (no auth required, like
-`GET /orders`):
+The API exposes current stock levels as a public read model (no auth required):
 
 ```bash
 curl http://localhost:8080/inventory            # all products (available + reserved)
@@ -242,8 +247,9 @@ npm run dev:notification    # terminal 4
 npm run dev:relay           # terminal 5 (outbox -> RabbitMQ)
 ```
 
-Set `JWT_SECRET` in `.env` (any non-empty value; the app defaults to
-`dev-insecure-change-me`). For tracing, set `OTEL_EXPORTER_OTLP_ENDPOINT`.
+Set `JWT_SECRET` in `.env` (any non-empty value other than
+`dev-insecure-change-me` when `NODE_ENV=production`). For tracing, set
+`OTEL_EXPORTER_OTLP_ENDPOINT`.
 The notification worker sends email via Nodemailer: `MAIL_MODE` is `console`
 (logs only, default) and can be switched to `smtp` or `resend` with the
 relevant credentials — see `.env.example`.
@@ -265,8 +271,9 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 The production overlay runs the compiled `dist/` output from the multi-stage
 Dockerfile without source bind mounts, and adds the `relay` service. Migrations
-are applied by the image entrypoint on boot. **Change `JWT_SECRET`** before any
-non-local deployment.
+are applied by the image entrypoint on boot. **`JWT_SECRET` is required** —
+export a strong value before `docker compose up` (the compose file refuses to
+start without it).
 
 ## Project structure
 
@@ -282,7 +289,7 @@ src/
     ├── config/           # zod-validated environment
     ├── db/               # Prisma client singleton
     ├── domain/           # Pure business logic (order math/status rules)
-    ├── messaging/        # Connection, topology, publisher, constants
+    ├── messaging/        # Connection, topology, publisher, idempotency helpers
     ├── observability/    # OpenTelemetry tracing + Prometheus metrics
     ├── repositories/     # Database access (OrderStore adapter)
     ├── storage/          # OrderStore implementations (in-memory/redis/postgres)

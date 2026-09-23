@@ -1,13 +1,13 @@
 import { CreateOrderInput, OrderItem, OrderStatus } from '../types/order';
 
 /**
- * Storage bağımsızlığı için ortak arayüz.
+ * Storage-agnostic order persistence contract.
  *
- * beginner  : InMemoryOrderStore       (tek süreç, hiçbir dış bağımlılık)
+ * beginner  : InMemoryOrderStore       (single process, no external deps)
  * mid       : + RedisOrderStore        (ioredis)
  * hero      : + PostgresOrderStore     (@prisma/client)
  *
- * STORE env değeri hangi adapterin aktif olduğunu belirler.
+ * The `STORE` env value selects the active adapter.
  */
 export interface OrderRecord {
   id: string;

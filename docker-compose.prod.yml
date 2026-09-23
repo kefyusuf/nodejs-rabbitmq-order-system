@@ -15,8 +15,8 @@ services:
       DATABASE_URL: postgresql://orders_app:orders_app@postgres:5432/orders?schema=public
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
       RABBITMQ_EXCHANGE: orders
-      # Change this before any non-local deployment.
-      JWT_SECRET: dev-insecure-change-me
+      # Required: set a strong secret in the environment before deploying.
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set to a strong value}
       # Optional: set to an OTLP HTTP endpoint to export traces.
       # OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     ports:
