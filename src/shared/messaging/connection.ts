@@ -1,4 +1,4 @@
-import amqp, { ConfirmChannel, ChannelModel } from 'amqplib';
+import amqp, { ConfirmChannel, RecoveringChannelModel } from 'amqplib';
 import { env } from '../config/env';
 import { logger } from '../observability/logger';
 import {
@@ -9,12 +9,12 @@ import {
   ROUTING_KEYS,
 } from './constants';
 
-let connection: ChannelModel | null = null;
+let connection: RecoveringChannelModel | null = null;
 let channel: ConfirmChannel | null = null;
 let connecting: Promise<ConfirmChannel> | null = null;
 
 /**
- * amqplib 0.10 'recovery' option auto-reconnects the connection and recovers
+ * amqplib 2.x `recovery` option auto-reconnects the connection and recovers
  * channels (re-declares the topology and re-registers consumers). No hand-rolled
  * reconnect loop is needed; callers just await getChannel() and publish.
  *
@@ -41,8 +41,12 @@ async function establishChannel(): Promise<ConfirmChannel> {
   conn.on('error', (error: Error) => {
     logger.error({ err: error }, 'RabbitMQ connection error');
   });
-  conn.on('close', () => {
-    logger.warn('RabbitMQ connection closed — amqplib will auto-recover');
+  // RecoveringChannelModel emits 'disconnect' (not 'close') while it retries.
+  conn.on('disconnect', (error: Error) => {
+    logger.warn(
+      { err: error },
+      'RabbitMQ disconnected — amqplib will auto-recover',
+    );
     channel = null;
     connection = null;
   });
