@@ -1,8 +1,16 @@
 {
-  "name": "nodejs-rabbitmq",
+  "name": "nodejs-rabbitmq-order-system",
   "version": "1.0.0",
-  "description": "Order placement API with Fastify, RabbitMQ and PostgreSQL",
+  "description": "Event-driven order system with Fastify, RabbitMQ and PostgreSQL (transactional outbox, saga, idempotent consumers)",
   "main": "dist/api/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kefyusuf/nodejs-rabbitmq-order-system.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kefyusuf/nodejs-rabbitmq-order-system/issues"
+  },
+  "homepage": "https://github.com/kefyusuf/nodejs-rabbitmq-order-system#readme",
   "scripts": {
     "dev:api": "tsx watch src/api/index.ts",
     "dev:worker": "tsx watch src/worker/index.ts",
