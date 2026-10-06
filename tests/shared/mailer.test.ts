@@ -16,10 +16,14 @@ vi.mock('nodemailer', () => ({
 vi.stubEnv('MAIL_MODE', 'console');
 vi.stubEnv('MAIL_FROM', 'from@example.com');
 
-const { mailer } = await import('../../src/shared/mailer');
+let mailer: (typeof import('../../src/shared/mailer'))['mailer'];
 
 describe('mailer', () => {
-  beforeEach(() => sendMailMock.mockClear());
+  beforeEach(async () => {
+    vi.resetModules();
+    sendMailMock.mockClear();
+    ({ mailer } = await import('../../src/shared/mailer'));
+  });
 
   it('sends with the configured from address and recipient', async () => {
     await mailer.sendMail({
@@ -28,7 +32,7 @@ describe('mailer', () => {
       text: 'Body',
     });
 
-    expect(createTransportMock).toHaveBeenCalled();
+    expect(createTransportMock).toHaveBeenCalledWith({ jsonTransport: true });
     expect(sendMailMock).toHaveBeenCalledWith(
       expect.objectContaining({
         from: 'from@example.com',
