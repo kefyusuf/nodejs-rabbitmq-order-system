@@ -261,6 +261,11 @@ relevant credentials — see `.env.example`.
 
 ## Testing, linting, building
 
+`npm run build` uses the TypeScript 7 native compiler (`@typescript/native`).
+The `typescript` dependency aliases the official `@typescript/typescript6`
+compatibility package so ESLint can use the TypeScript 6 compiler API.
+This follows the [TypeScript side-by-side migration guidance](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-6-0).
+
 ```bash
 npm test            # Vitest unit tests (domain, schemas, handler, routes)
 npm run lint        # ESLint
